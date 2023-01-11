@@ -1,0 +1,4 @@
+#!/bin/sh
+
+# This is a wrapper for IDE so as it can use emcmake like cmake...
+emcmake cmake "$@"
