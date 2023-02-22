@@ -2,6 +2,7 @@
 #include "MarkdownHelper.h"
 #include "hello_imgui/hello_imgui.h"
 #include "implot.h"
+#include "implot_internal.h"
 #include <chrono>
 #include <cstdarg>
 #include <emscripten/fetch.h>
@@ -47,8 +48,153 @@ inline ImU32 minmax(bool max, const ImU32 n, ...) {
     return minmax;
 }
 
+static ImVec4 quarkus_red_color = ImColor(IM_COL32(255, 0, 74, 255)).Value;
+static ImVec4 quarkus_blue_color = ImColor(IM_COL32(70, 149, 235, 255)).Value;
+static ImVec4 quarkus_magenta_color = ImColor(IM_COL32(205, 84, 225, 255)).Value;
+
+#define COUNTC 15
+void plotMultiline2(int row, int col) {
+    static char title[17] = {};
+    sprintf(title, "## row %d col %d", row, col);
+
+    static ImPlotRect lims(0, 15, 0, 1);
+
+    if (ImPlot::BeginPlot(title)) {
+        ImPlot::SetupAxesLimits(-0.5f, 9.5f, 0, COUNTC);
+        ImPlot::SetupAxisLinks(ImAxis_X1, &lims.X.Min, &lims.X.Max);
+        ImPlot::SetupAxes("##x-axis", "y-axis");
+        unsigned int a[COUNTC] = {2, 3, 7, 4, 6, 3, 4, 6, 4, 6, 4, 5, 6, 7, 6};
+        unsigned int b[COUNTC] = {1, 2, 5, 3, 4, 1, 2, 5, 3, 4, 4, 5, 7, 8, 9};
+        unsigned int c[COUNTC] = {1, 3, 5, 4, 5, 2, 3, 4, 3, 3, 4, 6, 6, 5, 4};
+        unsigned int d[COUNTC] = {3, 4, 6, 4, 5, 2, 4, 5, 3, 2, 3, 4, 5, 4, 4};
+        unsigned int e[COUNTC] = {2, 3, 5, 4, 6, 7, 8, 7, 6, 5, 4, 7, 5, 6, 4};
+        unsigned int f[COUNTC] = {3, 4, 6, 7, 8, 9, 8, 9, 8, 9, 10, 11, 12, 9, 10};
+        const double positions[COUNTC] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14};
+        const char *labels[COUNTC] = {"Q 2.13.7.Final M 22.3.1.0 J 17", "Q 2.13.7.Final M 22.3.1.0 J 17", "Q 2.13.7.Final M 22.3.1.0 J 17", "Q 2.13.7.Final M 22.3.1.0 J 17", "Q 2.13.7.Final M 22.3.1.0 J 17", "Q 2.13.7.Final M 22.3.1.0 J 17", "Q 2.13.7.Final M 22.3.1.0 J 17", "Q 2.13.7.Final M 22.3.1.0 J 17", "Q 2.13.7.Final M 22.3.1.0 J 17", "Q 2.13.7.Final M 22.3.1.0 J 17", "Q 2.13.7.Final M 22.3.1.0 J 17", "Q 2.13.7.Final M 22.3.1.0 J 17", "Q 2.13.7.Final M 22.3.1.0 J 17", "Q 2.13.7.Final M 22.3.1.0 J 17", "Q 2.13.7.Final M 22.3.1.0 J 17"};
+
+        ImPlot::SetupAxisTicks(ImAxis_X1, positions, COUNTC, labels, false);
+        ImPlot::SetNextFillStyle(quarkus_magenta_color, 1);
+        ImPlot::SetNextLineStyle(quarkus_magenta_color, 1);
+
+        ImPlot::PlotBars("Native aarch64, el8", a, COUNTC, 0.2f, -0.2f);
+        ImPlot::PlotBars("Native aarch64, el9", b, COUNTC, 0.2f, 0.0f);
+        ImPlot::PlotBars("Native amd64, el8", c, COUNTC, 0.2f, 0.2f);
+        //ImPlot::SetNextLineStyle(quarkus_red_color,1);
+        ImPlot::SetNextLineStyle(quarkus_blue_color, 1);
+        ImPlot::PlotLine("HotSpot aarch64, el8", d, COUNTC);
+        //ImPlot::SetNextLineStyle(quarkus_blue_color, 1);
+        ImPlot::PlotLine("HotSpot aarch64, el9", e, COUNTC);
+        ImPlot::PlotLine("HotSpot amd64, el8", f, COUNTC);
+
+
+        const ImVec2& pix_offset=ImVec2(0,0);
+        ImPlot::PushStyleColor(ImPlotCol_InlayText, ImVec4(1,0,1,1));
+        double delta =0;
+        for(int i =0;i < COUNTC;i++) {
+            ImPlot::PlotText(labels[i], 5.0f+delta, 6.0f, ImVec2(0,0), ImPlotTextFlags_Vertical);
+        delta=delta+3;
+        }
+
+
+        ImPlot::PopStyleColor();
+
+
+        ImPlot::EndPlot();
+    }
+}
+
+
+
+void ShowDemo_BarPlots2() {
+
+    static ImGuiTableFlags flags = ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV |
+                                   ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_Reorderable;
+    ImGui::BulletText("Plots can be used inside of ImGui tables as another means of creating subplots.");
+    if (ImGui::BeginTable("##table 2", 2, flags, ImVec2(-1, 0))) {
+        ImGui::TableSetupColumn("## meh 1", ImGuiTableColumnFlags_WidthStretch, 33.0f);
+        ImGui::TableSetupColumn("## meh 2", ImGuiTableColumnFlags_WidthStretch, 33.0f);
+        //ImGui::TableSetupColumn("amd64, el8", ImGuiTableColumnFlags_WidthStretch, 33.0f);
+        ImGui::TableHeadersRow();
+        ImPlot::PushColormap(ImPlotColormap_Deep);
+        if (ImPlot::BeginAlignedPlots("AlignedGroup")) {
+            for (int row = 0; row < 3; row++) {
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::PushID(row);
+                plotMultiline2(row, 0);
+                ImGui::PopID();
+                ImGui::TableSetColumnIndex(1);
+                ImGui::PushID(row);
+                plotMultiline2(row, 1);
+                ImGui::PopID();
+            }
+        }
+        ImPlot::EndAlignedPlots();
+        ImPlot::PopColormap();
+        ImGui::EndTable();
+    }
+}
+
+
+void plotMultiline3(int row, int col) {
+    static char title[17] = {};
+    sprintf(title, "## row %d col %d", row, col);
+    if (ImPlot::BeginPlot(title)) {
+        unsigned int a[COUNTC] = {2, 3, 7, 4, 6, 3, 4, 6, 4, 6, 4, 5, 6, 7, 6};
+        unsigned int b[COUNTC] = {1, 2, 5, 3, 4, 1, 2, 5, 3, 4, 4, 5, 7, 8, 9};
+        unsigned int c[COUNTC] = {1, 3, 5, 4, 5, 2, 3, 4, 3, 3, 4, 6, 6, 5, 4};
+        unsigned int d[COUNTC] = {3, 4, 6, 4, 5, 2, 4, 5, 3, 2, 3, 4, 5, 4, 4};
+        unsigned int e[COUNTC] = {2, 3, 5, 4, 6, 7, 8, 7, 6, 5, 4, 7, 5, 6, 4};
+        unsigned int f[COUNTC] = {3, 4, 6, 7, 8, 9, 8, 9, 8, 9, 10, 11, 12, 9, 10};
+        const double positions[COUNTC] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14};
+        const char *labels[COUNTC] = {"2.13.7 22.3.1.0 17","2.13.7 22.3.1.0 17","2.13.7 22.3.1.0 17","2.13.7 22.3.1.0 17","2.13.7 22.3.1.0 17","2.13.7 22.3.1.0 17","2.13.7 22.3.1.0 17","2.13.7 22.3.1.0 17","2.13.7 22.3.1.0 17","2.13.7 22.3.1.0 17","2.13.7 22.3.1.0 17","2.13.7 22.3.1.0 17","2.13.7 22.3.1.0 17","2.13.7 22.3.1.0 17","2.13.7 22.3.1.0 17"};
+        ImPlot::SetupAxes("##x-axis", "y-axis", ImPlotTextFlags_Vertical);
+        ImPlot::SetupAxesLimits(-0.5f, 9.5f, 0, COUNTC);
+        ImPlot::SetupAxisTicks(ImAxis_X1, positions, COUNTC);//, labels, false);
+        ImPlot::SetNextLineStyle(quarkus_magenta_color, 1);
+        ImPlot::PlotLine("HotSpot", a, COUNTC);
+        ImPlot::SetNextLineStyle(quarkus_blue_color, 1);
+        ImPlot::PlotLine("Native", b, COUNTC);
+        for(int i =0;i < COUNTC;i++) {
+            ImPlot::PlotText(labels[i], i, 7.0f, ImVec2(0,0), ImPlotTextFlags_Vertical);
+        }
+        ImPlot::EndPlot();
+    }
+}
+
+void ShowDemo_BarPlots3() {
+    static ImGuiTableFlags flags = ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV |
+                                   ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_Reorderable;
+    ImGui::BulletText("Plots can be used inside of ImGui tables as another means of creating subplots.");
+    if (ImGui::BeginTable("##table 3", 3, flags, ImVec2(-1, 0))) {
+        ImGui::TableSetupColumn("aarch64, el8", ImGuiTableColumnFlags_WidthStretch, 33.0f);
+        ImGui::TableSetupColumn("aarch64, el9", ImGuiTableColumnFlags_WidthStretch, 33.0f);
+        ImGui::TableSetupColumn("amd64, el8", ImGuiTableColumnFlags_WidthStretch, 33.0f);
+        ImGui::TableHeadersRow();
+        ImPlot::PushColormap(ImPlotColormap_Deep);
+        for (int row = 0; row < 6; row++) {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::PushID(row);
+            plotMultiline3(row, 0);
+            ImGui::PopID();
+            ImGui::TableSetColumnIndex(1);
+            ImGui::PushID(row);
+            plotMultiline3(row, 1);
+            ImGui::PopID();
+            ImGui::TableSetColumnIndex(2);
+            ImGui::PushID(row);
+            plotMultiline3(row, 2);
+            ImGui::PopID();
+        }
+        ImPlot::PopColormap();
+        ImGui::EndTable();
+    }
+}
+
+
 void ShowDemo_BarPlots() {
-    static bool horz = false;
+    //static bool horz = false;
     ImS32 ticks, count;
     count = pl.elements;
     static const std::string desNA = "# Demo data\n"
@@ -57,83 +203,45 @@ void ShowDemo_BarPlots() {
                                        "This is a demo dataset, made on a laptop with [Mandrel integration tests](https://github.com/Karm/mandrel-integration-tests/tree/master/apps)\n";
     MarkdownHelper::Markdown(count > 0 ? desdata : desNA);
     ticks = count / 3;
-    if (count > 0) {
-        ImGui::Checkbox("Horizontal", &horz);
-    }
+
     if (count > 0 && ImPlot::BeginPlot("Time to complete, shorter the better")) {
         ImPlot::SetupLegend(ImPlotLocation_East, ImPlotLegendFlags_Outside);
-        if (horz) {
-            ImPlot::SetupAxesLimits(0, pl.maxSeconds + (pl.maxSeconds / 5), -0.5, ticks - 0.5, ImGuiCond_Always);
-            ImPlot::SetupAxes("Run time [s]", "Mandrel version, Quarkus version", 0, ImPlotAxisFlags_Invert);
-            ImPlot::SetupAxisTicks(ImAxis_Y1, pl.positions, ticks, pl.labels);
-            ImPlot::PlotBars("Native ParseOnce+", nativeParseOncePlus.secondsTimeElapsed, count, 0.2, -0.2, ImPlotBarsFlags_Horizontal);
-            ImPlot::PlotBars("Native ParseOnce-", nativeParseOnceMinus.secondsTimeElapsed, count, 0.2, 0, ImPlotBarsFlags_Horizontal);
-            ImPlot::PlotBars("HotSpot", hotspot.secondsTimeElapsed, count, 0.2, 0.2, ImPlotBarsFlags_Horizontal);
-        } else {
-            ImPlot::SetupAxesLimits(-0.5, ticks - 0.5, 0, pl.maxSeconds + (pl.maxSeconds / 5), ImGuiCond_Always);
-            ImPlot::SetupAxes("Mandrel version, Quarkus version", "Run time [s]");
-            ImPlot::SetupAxisTicks(ImAxis_X1, pl.positions, ticks, pl.labels);
-            ImPlot::PlotBars("Native ParseOnce+", nativeParseOncePlus.secondsTimeElapsed, count, 0.2, -0.2);
-            ImPlot::PlotBars("Native ParseOnce-", nativeParseOnceMinus.secondsTimeElapsed, count, 0.2, 0);
-            ImPlot::PlotBars("HotSpot", hotspot.secondsTimeElapsed, count, 0.2, 0.2);
-        }
+        ImPlot::SetupAxesLimits(-0.5, ticks - 0.5, 0, pl.maxSeconds + (pl.maxSeconds / 5), ImGuiCond_Always);
+        ImPlot::SetupAxes("Mandrel version, Quarkus version", "Run time [s]");
+        ImPlot::SetupAxisTicks(ImAxis_X1, pl.positions, ticks, pl.labels);
+        ImPlot::PlotBars("Native ParseOnce+", nativeParseOncePlus.secondsTimeElapsed, count, 0.2, -0.2);
+        ImPlot::PlotBars("Native ParseOnce-", nativeParseOnceMinus.secondsTimeElapsed, count, 0.2, 0);
+        ImPlot::PlotBars("HotSpot", hotspot.secondsTimeElapsed, count, 0.2, 0.2);
         ImPlot::EndPlot();
     }
     if (count > 0 && ImPlot::BeginPlot("Peak RSS, shorter the better")) {
         ImPlot::SetupLegend(ImPlotLocation_East, ImPlotLegendFlags_Outside);
-        if (horz) {
-            ImPlot::SetupAxesLimits(0, pl.maxMB + (pl.maxMB / 5), -0.5, ticks - 0.5, ImGuiCond_Always);
-            ImPlot::SetupAxes("RSS [MB]", "Mandrel version, Quarkus version", 0, ImPlotAxisFlags_Invert);
-            ImPlot::SetupAxisTicks(ImAxis_Y1, pl.positions, ticks, pl.labels);
-            ImPlot::PlotBars("Native ParseOnce+", nativeParseOncePlus.rssMB, count, 0.2, -0.2, ImPlotBarsFlags_Horizontal);
-            ImPlot::PlotBars("Native ParseOnce-", nativeParseOnceMinus.rssMB, count, 0.2, 0, ImPlotBarsFlags_Horizontal);
-            ImPlot::PlotBars("HotSpot", hotspot.rssMB, count, 0.2, 0.2, ImPlotBarsFlags_Horizontal);
-        } else {
-            ImPlot::SetupAxesLimits(-0.5, ticks - 0.5, 0, pl.maxMB + (pl.maxMB / 5), ImGuiCond_Always);
-            ImPlot::SetupAxes("Mandrel version, Quarkus version", "RSS [MB]");
-            ImPlot::SetupAxisTicks(ImAxis_X1, pl.positions, ticks, pl.labels);
-            ImPlot::PlotBars("Native ParseOnce+", nativeParseOncePlus.rssMB, count, 0.2, -0.2);
-            ImPlot::PlotBars("Native ParseOnce-", nativeParseOnceMinus.rssMB, count, 0.2, 0);
-            ImPlot::PlotBars("HotSpot", hotspot.rssMB, count, 0.2, 0.2);
-        }
+        ImPlot::SetupAxesLimits(-0.5, ticks - 0.5, 0, pl.maxMB + (pl.maxMB / 5), ImGuiCond_Always);
+        ImPlot::SetupAxes("Mandrel version, Quarkus version", "RSS [MB]");
+        ImPlot::SetupAxisTicks(ImAxis_X1, pl.positions, ticks, pl.labels);
+        ImPlot::PlotBars("Native ParseOnce+", nativeParseOncePlus.rssMB, count, 0.2, -0.2);
+        ImPlot::PlotBars("Native ParseOnce-", nativeParseOnceMinus.rssMB, count, 0.2, 0);
+        ImPlot::PlotBars("HotSpot", hotspot.rssMB, count, 0.2, 0.2);
         ImPlot::EndPlot();
     }
     if (count > 0 && ImPlot::BeginPlot("Time spent in GC, shorter the better")) {
         ImPlot::SetupLegend(ImPlotLocation_East, ImPlotLegendFlags_Outside);
-        if (horz) {
-            ImPlot::SetupAxesLimits(0, pl.maxSecondsInGC + (pl.maxSecondsInGC / 5), -0.5, ticks - 0.5, ImGuiCond_Always);
-            ImPlot::SetupAxes("Seconds spent in SerialGC", "Mandrel version, Quarkus version", 0, ImPlotAxisFlags_Invert);
-            ImPlot::SetupAxisTicks(ImAxis_Y1, pl.positions, ticks, pl.labels);
-            ImPlot::PlotBars("Native ParseOnce+", nativeParseOncePlus.secondsInGC, count, 0.2, -0.2, ImPlotBarsFlags_Horizontal);
-            ImPlot::PlotBars("Native ParseOnce-", nativeParseOnceMinus.secondsInGC, count, 0.2, 0, ImPlotBarsFlags_Horizontal);
-            ImPlot::PlotBars("HotSpot", hotspot.secondsInGC, count, 0.2, 0.2, ImPlotBarsFlags_Horizontal);
-        } else {
-            ImPlot::SetupAxesLimits(-0.5, ticks - 0.5, 0, pl.maxSecondsInGC + (pl.maxSecondsInGC / 5), ImGuiCond_Always);
-            ImPlot::SetupAxes("Mandrel version, Quarkus version", "Seconds spent in SerialGC");
-            ImPlot::SetupAxisTicks(ImAxis_X1, pl.positions, ticks, pl.labels);
-            ImPlot::PlotBars("Native ParseOnce+", nativeParseOncePlus.secondsInGC, count, 0.2, -0.2);
-            ImPlot::PlotBars("Native ParseOnce-", nativeParseOnceMinus.secondsInGC, count, 0.2, 0);
-            ImPlot::PlotBars("HotSpot", hotspot.secondsInGC, count, 0.2, 0.2);
-        }
+        ImPlot::SetupAxesLimits(-0.5, ticks - 0.5, 0, pl.maxSecondsInGC + (pl.maxSecondsInGC / 5), ImGuiCond_Always);
+        ImPlot::SetupAxes("Mandrel version, Quarkus version", "Seconds spent in SerialGC");
+        ImPlot::SetupAxisTicks(ImAxis_X1, pl.positions, ticks, pl.labels);
+        ImPlot::PlotBars("Native ParseOnce+", nativeParseOncePlus.secondsInGC, count, 0.2, -0.2);
+        ImPlot::PlotBars("Native ParseOnce-", nativeParseOnceMinus.secondsInGC, count, 0.2, 0);
+        ImPlot::PlotBars("HotSpot", hotspot.secondsInGC, count, 0.2, 0.2);
         ImPlot::EndPlot();
     }
     if (count > 0 && ImPlot::BeginPlot("CPU instructions executed, fewer the better")) {
         ImPlot::SetupLegend(ImPlotLocation_East, ImPlotLegendFlags_Outside);
-        if (horz) {
-            ImPlot::SetupAxesLimits(0, pl.maxCPUInstructions + (pl.maxCPUInstructions / 5), -0.5, ticks - 0.5, ImGuiCond_Always);
-            ImPlot::SetupAxes("Billions of instructions", "Mandrel version, Quarkus version", 0, ImPlotAxisFlags_Invert);
-            ImPlot::SetupAxisTicks(ImAxis_Y1, pl.positions, ticks, pl.labels);
-            ImPlot::PlotBars("Native ParseOnce+", nativeParseOncePlus.cpuInstructions, count, 0.2, -0.2, ImPlotBarsFlags_Horizontal);
-            ImPlot::PlotBars("Native ParseOnce-", nativeParseOnceMinus.cpuInstructions, count, 0.2, 0, ImPlotBarsFlags_Horizontal);
-            ImPlot::PlotBars("HotSpot", hotspot.cpuInstructions, count, 0.2, 0.2, ImPlotBarsFlags_Horizontal);
-        } else {
-            ImPlot::SetupAxesLimits(-0.5, ticks - 0.5, 0, pl.maxCPUInstructions + (pl.maxCPUInstructions / 5), ImGuiCond_Always);
-            ImPlot::SetupAxes("Mandrel version, Quarkus version", "Billions of instructions");
-            ImPlot::SetupAxisTicks(ImAxis_X1, pl.positions, ticks, pl.labels);
-            ImPlot::PlotBars("Native ParseOnce+", nativeParseOncePlus.cpuInstructions, count, 0.2, -0.2);
-            ImPlot::PlotBars("Native ParseOnce-", nativeParseOnceMinus.cpuInstructions, count, 0.2, 0);
-            ImPlot::PlotBars("HotSpot", hotspot.cpuInstructions, count, 0.2, 0.2);
-        }
+        ImPlot::SetupAxesLimits(-0.5, ticks - 0.5, 0, pl.maxCPUInstructions + (pl.maxCPUInstructions / 5), ImGuiCond_Always);
+        ImPlot::SetupAxes("Mandrel version, Quarkus version", "Billions of instructions");
+        ImPlot::SetupAxisTicks(ImAxis_X1, pl.positions, ticks, pl.labels);
+        ImPlot::PlotBars("Native ParseOnce+", nativeParseOncePlus.cpuInstructions, count, 0.2, -0.2);
+        ImPlot::PlotBars("Native ParseOnce-", nativeParseOnceMinus.cpuInstructions, count, 0.2, 0);
+        ImPlot::PlotBars("HotSpot", hotspot.cpuInstructions, count, 0.2, 0.2);
         ImPlot::EndPlot();
     }
 }
@@ -364,24 +472,45 @@ int main(int, char **) {
     runnerParams.imGuiWindowParams.showMenuBar = true;
     runnerParams.callbacks.LoadAdditionalFonts = MarkdownHelper::LoadFonts;
     runnerParams.imGuiWindowParams.defaultImGuiWindowType = HelloImGui::DefaultImGuiWindowType::ProvideFullScreenDockSpace;
+
     HelloImGui::DockingSplit splitMainLeft;
     splitMainLeft.initialDock = "MainDockSpace";
     splitMainLeft.newDock = "LeftSpace";
     splitMainLeft.direction = ImGuiDir_Left;
     splitMainLeft.ratio = 0.15f;
     runnerParams.dockingParams.dockingSplits = {splitMainLeft};
+
     HelloImGui::DockableWindow commandsWindow;
     commandsWindow.label = "Operations";
     commandsWindow.dockSpaceName = "LeftSpace";
     //commandsWindow.GuiFonction = [&appState]() { CommandGui(appState); };
     commandsWindow.GuiFonction = CommandGui;
+
     HelloImGui::DockableWindow chartsWindow;
     chartsWindow.label = "ParseOnce charts";
     chartsWindow.canBeClosed = false;
     chartsWindow.dockSpaceName = "MainDockSpace";
     //chartsWindow.GuiFonction = [&appState] { MainWindow(appState); };
     chartsWindow.GuiFonction = MainWindow;
-    runnerParams.dockingParams.dockableWindows = {commandsWindow, chartsWindow};
+
+    HelloImGui::DockableWindow charts2Window;
+    charts2Window.label = "Perf demo charts 2";
+    charts2Window.canBeClosed = false;
+    charts2Window.dockSpaceName = "MainDockSpace";
+    //chartsWindow.GuiFonction = [&appState] { MainWindow(appState); };
+    charts2Window.GuiFonction = ShowDemo_BarPlots2;
+
+
+    HelloImGui::DockableWindow charts3Window;
+    charts3Window.label = "Perf demo charts 3";
+    charts3Window.canBeClosed = false;
+    charts3Window.dockSpaceName = "MainDockSpace";
+    //chartsWindow.GuiFonction = [&appState] { MainWindow(appState); };
+    charts3Window.GuiFonction = ShowDemo_BarPlots3;
+
+
+    runnerParams.dockingParams.dockableWindows = {commandsWindow, chartsWindow, charts2Window, charts3Window};
+
     auto implotContext = ImPlot::CreateContext();
     HelloImGui::Run(runnerParams);
     ImPlot::DestroyContext(implotContext);
