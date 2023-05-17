@@ -152,5 +152,7 @@ target_link_libraries(collector-web PRIVATE json-c)
 # Test data, TODO: Remove...
 file(COPY ${CMAKE_CURRENT_LIST_DIR}/data/perf_data.json
      DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
+file(COPY ${CMAKE_CURRENT_LIST_DIR}/data/build_perf_data.json
+        DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
 file(COPY ${CMAKE_CURRENT_LIST_DIR}/data/favicon.ico
      DESTINATION ${CMAKE_CURRENT_BINARY_DIR})

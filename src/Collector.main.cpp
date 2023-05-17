@@ -9,378 +9,541 @@
 #include <json.h>
 
 #define MAX_RECORDS_ROW 1024
+#define MAX_LABEL_LENGTH 256
+#define MAX_MARGIN(x) x + x / 3
 
-struct GlobalStats {
+struct Downloads {
     float download_progress_bar = 0.f;
     bool download_in_progress = false;
-    time_t download_timestamp;
+    time_t download_timestamp{};
     bool download_error = false;
-} globals;
+} downloads;
 
-struct ParseOnce {
-    ImU32 secondsTimeElapsed[MAX_RECORDS_ROW];
-    ImU32 rssMB[MAX_RECORDS_ROW];
-    ImU32 cpuInstructions[MAX_RECORDS_ROW];
-    ImU32 secondsInGC[MAX_RECORDS_ROW];
-} nativeParseOncePlus, nativeParseOnceMinus, hotspot;
+struct BuildTime {
+    ImU64 classes_jni[MAX_RECORDS_ROW];
+    ImU64 fields_jni[MAX_RECORDS_ROW];
+    ImU64 methods_jni[MAX_RECORDS_ROW];
+    ImU64 classes_reflection[MAX_RECORDS_ROW];
+    ImU64 fields_reflection[MAX_RECORDS_ROW];
+    ImU64 resources_count[MAX_RECORDS_ROW];
+    ImU64 resources_bytes[MAX_RECORDS_ROW];
+    ImU64 classes_reachable[MAX_RECORDS_ROW];
+    ImU64 classes_total[MAX_RECORDS_ROW];
+    ImU64 fields_reachable[MAX_RECORDS_ROW];
+    ImU64 fields_total[MAX_RECORDS_ROW];
+    ImU64 methods_reachable[MAX_RECORDS_ROW];
+    ImU64 methods_total[MAX_RECORDS_ROW];
+    ImU64 methods_reflection[MAX_RECORDS_ROW];
+    ImU64 total_build_time_ms[MAX_RECORDS_ROW];
+    ImU64 gc_total_ms[MAX_RECORDS_ROW];
+    ImU64 peak_rss_bytes[MAX_RECORDS_ROW];
+    ImU64 image_heap_bytes[MAX_RECORDS_ROW];
+    ImU64 image_total_bytes[MAX_RECORDS_ROW];
+    ImU64 code_area_bytes[MAX_RECORDS_ROW];
+} buildTime;
 
-struct PositionsLabels {
-    ImU32 maxSeconds = 0;
-    ImU32 maxMB = 0;
-    ImU32 maxCPUInstructions = 0;
-    ImU32 maxSecondsInGC = 0;
-    char **labels;
-    double positions[MAX_RECORDS_ROW];
-    ImS32 elements = 0;
-} pl;
+struct BuildTimeLabels {
+    ImU64 max_classes_jni = 0;
+    ImU64 max_fields_jni = 0;
+    ImU64 max_methods_jni = 0;
+    ImU64 max_classes_reflection = 0;
+    ImU64 max_fields_reflection = 0;
+    ImU64 max_resources_count = 0;
+    ImU64 max_resources_bytes = 0;
+    ImU64 max_classes_reachable = 0;
+    ImU64 max_classes_total = 0;
+    ImU64 max_fields_reachable = 0;
+    ImU64 max_fields_total = 0;
+    ImU64 max_methods_reachable = 0;
+    ImU64 max_methods_total = 0;
+    ImU64 max_methods_reflection = 0;
+    ImU64 max_total_build_time_ms = 0;
+    ImU64 max_gc_total_ms = 0;
+    ImU64 max_peak_rss_bytes = 0;
+    ImU64 max_image_heap_bytes = 0;
+    ImU64 max_image_total_bytes = 0;
+    ImU64 max_code_area_bytes = 0;
+    char labels[MAX_RECORDS_ROW][MAX_LABEL_LENGTH]{};
+    double positions[MAX_RECORDS_ROW]{};
+    ImU32 elements = 0;
+} buildTimeLabels;
 
-inline ImU32 minmax(bool max, const ImU32 n, ...) {
+#define CLASSES_JNI_IDX 6
+#define CLASSES_REACHABLE_IDX 7
+#define CLASSES_REFLECTION_IDX 8
+#define CLASSES_TOTAL_IDX 9
+#define CODE_AREA_BYTES_IDX 4
+#define FIELDS_JNI_IDX 10
+#define FIELDS_REACHABLE_IDX 11
+#define FIELDS_REFLECTION_IDX 12
+#define FIELDS_TOTAL_IDX 13
+#define GC_TOTAL_MS_IDX 1
+#define IMAGE_HEAP_BYTES_IDX 3
+#define IMAGE_TOTAL_BYTES_IDX 5
+#define METHODS_JNI_IDX 14
+#define METHODS_REACHABLE_IDX 15
+#define METHODS_REFLECTION_IDX 16
+#define METHODS_TOTAL_IDX 17
+#define PEAK_RSS_BYTES_IDX 2
+#define RESOURCES_BYTES_IDX 18
+#define RESOURCES_COUNT_IDX 19
+#define TOTAL_BUILD_TIME_MS_IDX 0
+
+/**
+ * This order dictates the order of the columns and rows in the table.
+ * Mind updating the indices above if you change the order.
+ */
+const char *ATTRIBUTE_NAMES[] = {
+    "total_build_time_ms",
+    "gc_total_ms",
+    "peak_rss_bytes",
+    "image_heap_bytes",
+    "code_area_bytes",
+    "image_total_bytes",
+    "classes_jni",
+    "classes_reachable",
+    "classes_reflection",
+    "classes_total",
+    "fields_jni",
+    "fields_reachable",
+    "fields_reflection",
+    "fields_total",
+    "methods_jni",
+    "methods_reachable",
+    "methods_reflection",
+    "methods_total",
+    "resources_bytes",
+    "resources_count"};
+
+inline ImU64 max(const ImU64 n, ...) {
     va_list p;
     va_start(p, n);
-    ImU32 minmax = 0;
-    for (ImU32 i = 0; i < n; i++) {
-        const ImU32 tmp = va_arg(p, ImU32);
-        if ((max && tmp > minmax) || !max && tmp < minmax) {
-            minmax = tmp;
+    ImU64 max = 0;
+    for (ImU64 i = 0; i < n; i++) {
+        const ImU64 tmp = va_arg(p, ImU64);
+        if (tmp > max) {
+            max = tmp;
         }
     }
     va_end(p);
-    return minmax;
+    return max;
+}
+
+inline ImU64 min(const ImU64 n, ...) {
+    va_list p;
+    va_start(p, n);
+    ImU64 min = UINT64_MAX;
+    for (ImU64 i = 0; i < n; i++) {
+        const ImU64 tmp = va_arg(p, ImU64);
+        if (tmp < min) {
+            min = tmp;
+        }
+    }
+    va_end(p);
+    return min;
 }
 
 static ImVec4 quarkus_red_color = ImColor(IM_COL32(255, 0, 74, 255)).Value;
 static ImVec4 quarkus_blue_color = ImColor(IM_COL32(70, 149, 235, 255)).Value;
 static ImVec4 quarkus_magenta_color = ImColor(IM_COL32(205, 84, 225, 255)).Value;
 
-#define COUNTC 15
-void plotMultiline2(int row, int col) {
+inline bool cursorWithinXRegion(double mouse_x) {
+    return mouse_x - (int) mouse_x < 0.1 || mouse_x - (int) mouse_x > 0.9;
+}
+
+int SecondsFormatter(double value, char *buff, int size, void *data) {
+    const char *unit = (const char *) data;
+    if (value == 0) {
+        return snprintf(buff, size, "0 %s", unit);
+    }
+    return snprintf(buff, size, "%4.2f %s", value / 1000, unit);
+}
+
+int BytesFormatter(double value, char *buff, int size, void *data) {
+    const char *unit = (const char *) data;
+    static double v[] = {1024 * 1024 * 1024, 1024 * 1024, 1024, 1};
+    static const char *p[] = {"G", "M", "k", ""};
+    if (value == 0) {
+        return snprintf(buff, size, "0 %s", unit);
+    }
+    for (int i = 0; i < 4; ++i) {
+        if (fabs(value) >= v[i]) {
+            return snprintf(buff, size, "%4.2f %s%s", value / v[i], p[i], unit);
+        }
+    }
+    return snprintf(buff, size, "%4.2f %s%s", value / v[3], p[3], unit);
+}
+
+void plotBuildTime(int row, int col, int attribute_index) {
     static char title[17] = {};
     sprintf(title, "## row %d col %d", row, col);
-
-    static ImPlotRect lims(0, 15, 0, 1);
-
-    if (ImPlot::BeginPlot(title)) {
-        ImPlot::SetupAxesLimits(-0.5f, 9.5f, 0, COUNTC);
-        ImPlot::SetupAxisLinks(ImAxis_X1, &lims.X.Min, &lims.X.Max);
-        ImPlot::SetupAxes("##x-axis", "y-axis");
-        unsigned int a[COUNTC] = {2, 3, 7, 4, 6, 3, 4, 6, 4, 6, 4, 5, 6, 7, 6};
-        unsigned int b[COUNTC] = {1, 2, 5, 3, 4, 1, 2, 5, 3, 4, 4, 5, 7, 8, 9};
-        unsigned int c[COUNTC] = {1, 3, 5, 4, 5, 2, 3, 4, 3, 3, 4, 6, 6, 5, 4};
-        unsigned int d[COUNTC] = {3, 4, 6, 4, 5, 2, 4, 5, 3, 2, 3, 4, 5, 4, 4};
-        unsigned int e[COUNTC] = {2, 3, 5, 4, 6, 7, 8, 7, 6, 5, 4, 7, 5, 6, 4};
-        unsigned int f[COUNTC] = {3, 4, 6, 7, 8, 9, 8, 9, 8, 9, 10, 11, 12, 9, 10};
-        const double positions[COUNTC] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14};
-        const char *labels[COUNTC] = {"Q 2.13.7.Final M 22.3.1.0 J 17", "Q 2.13.7.Final M 22.3.1.0 J 17", "Q 2.13.7.Final M 22.3.1.0 J 17", "Q 2.13.7.Final M 22.3.1.0 J 17", "Q 2.13.7.Final M 22.3.1.0 J 17", "Q 2.13.7.Final M 22.3.1.0 J 17", "Q 2.13.7.Final M 22.3.1.0 J 17", "Q 2.13.7.Final M 22.3.1.0 J 17", "Q 2.13.7.Final M 22.3.1.0 J 17", "Q 2.13.7.Final M 22.3.1.0 J 17", "Q 2.13.7.Final M 22.3.1.0 J 17", "Q 2.13.7.Final M 22.3.1.0 J 17", "Q 2.13.7.Final M 22.3.1.0 J 17", "Q 2.13.7.Final M 22.3.1.0 J 17", "Q 2.13.7.Final M 22.3.1.0 J 17"};
-
-        ImPlot::SetupAxisTicks(ImAxis_X1, positions, COUNTC, labels, false);
-        ImPlot::SetNextFillStyle(quarkus_magenta_color, 1);
-        ImPlot::SetNextLineStyle(quarkus_magenta_color, 1);
-
-        ImPlot::PlotBars("Native aarch64, el8", a, COUNTC, 0.2f, -0.2f);
-        ImPlot::PlotBars("Native aarch64, el9", b, COUNTC, 0.2f, 0.0f);
-        ImPlot::PlotBars("Native amd64, el8", c, COUNTC, 0.2f, 0.2f);
-        //ImPlot::SetNextLineStyle(quarkus_red_color,1);
-        ImPlot::SetNextLineStyle(quarkus_blue_color, 1);
-        ImPlot::PlotLine("HotSpot aarch64, el8", d, COUNTC);
-        //ImPlot::SetNextLineStyle(quarkus_blue_color, 1);
-        ImPlot::PlotLine("HotSpot aarch64, el9", e, COUNTC);
-        ImPlot::PlotLine("HotSpot amd64, el8", f, COUNTC);
-
-
-        const ImVec2& pix_offset=ImVec2(0,0);
-        ImPlot::PushStyleColor(ImPlotCol_InlayText, ImVec4(1,0,1,1));
-        double delta =0;
-        for(int i =0;i < COUNTC;i++) {
-            ImPlot::PlotText(labels[i], 5.0f+delta, 6.0f, ImVec2(0,0), ImPlotTextFlags_Vertical);
-        delta=delta+3;
+    ImU64 *values;
+    double ymax;
+    const char *y_label = ATTRIBUTE_NAMES[attribute_index];
+    if (attribute_index == CLASSES_JNI_IDX) {
+        ymax = MAX_MARGIN(buildTimeLabels.max_classes_jni);
+        values = buildTime.classes_jni;
+    } else if (attribute_index == CLASSES_REACHABLE_IDX) {
+        ymax = MAX_MARGIN(buildTimeLabels.max_classes_reachable);
+        values = buildTime.classes_reachable;
+    } else if (attribute_index == CLASSES_REFLECTION_IDX) {
+        ymax = MAX_MARGIN(buildTimeLabels.max_classes_reflection);
+        values = buildTime.classes_reflection;
+    } else if (attribute_index == CLASSES_TOTAL_IDX) {
+        ymax = MAX_MARGIN(buildTimeLabels.max_classes_total);
+        values = buildTime.classes_total;
+    } else if (attribute_index == CODE_AREA_BYTES_IDX) {
+        ymax = MAX_MARGIN(buildTimeLabels.max_code_area_bytes);
+        values = buildTime.code_area_bytes;
+    } else if (attribute_index == FIELDS_JNI_IDX) {
+        ymax = MAX_MARGIN(buildTimeLabels.max_fields_jni);
+        values = buildTime.fields_jni;
+    } else if (attribute_index == FIELDS_REACHABLE_IDX) {
+        ymax = MAX_MARGIN(buildTimeLabels.max_fields_reachable);
+        values = buildTime.fields_reachable;
+    } else if (attribute_index == FIELDS_REFLECTION_IDX) {
+        ymax = MAX_MARGIN(buildTimeLabels.max_fields_reflection);
+        values = buildTime.fields_reflection;
+    } else if (attribute_index == FIELDS_TOTAL_IDX) {
+        ymax = MAX_MARGIN(buildTimeLabels.max_fields_total);
+        values = buildTime.fields_total;
+    } else if (attribute_index == GC_TOTAL_MS_IDX) {
+        ymax = MAX_MARGIN(buildTimeLabels.max_gc_total_ms);
+        values = buildTime.gc_total_ms;
+    } else if (attribute_index == IMAGE_HEAP_BYTES_IDX) {
+        ymax = MAX_MARGIN(buildTimeLabels.max_image_heap_bytes);
+        values = buildTime.image_heap_bytes;
+    } else if (attribute_index == IMAGE_TOTAL_BYTES_IDX) {
+        ymax = MAX_MARGIN(buildTimeLabels.max_image_total_bytes);
+        values = buildTime.image_total_bytes;
+    } else if (attribute_index == METHODS_JNI_IDX) {
+        ymax = MAX_MARGIN(buildTimeLabels.max_methods_jni);
+        values = buildTime.methods_jni;
+    } else if (attribute_index == METHODS_REACHABLE_IDX) {
+        ymax = MAX_MARGIN(buildTimeLabels.max_methods_reachable);
+        values = buildTime.methods_reachable;
+    } else if (attribute_index == METHODS_REFLECTION_IDX) {
+        ymax = MAX_MARGIN(buildTimeLabels.max_methods_reflection);
+        values = buildTime.methods_reflection;
+    } else if (attribute_index == METHODS_TOTAL_IDX) {
+        ymax = MAX_MARGIN(buildTimeLabels.max_methods_total);
+        values = buildTime.methods_total;
+    } else if (attribute_index == PEAK_RSS_BYTES_IDX) {
+        ymax = MAX_MARGIN(buildTimeLabels.max_peak_rss_bytes);
+        values = buildTime.peak_rss_bytes;
+    } else if (attribute_index == RESOURCES_BYTES_IDX) {
+        ymax = MAX_MARGIN(buildTimeLabels.max_resources_bytes);
+        values = buildTime.resources_bytes;
+    } else if (attribute_index == RESOURCES_COUNT_IDX) {
+        ymax = MAX_MARGIN(buildTimeLabels.max_resources_count);
+        values = buildTime.resources_count;
+    } else if (attribute_index == TOTAL_BUILD_TIME_MS_IDX) {
+        ymax = MAX_MARGIN(buildTimeLabels.max_total_build_time_ms);
+        values = buildTime.total_build_time_ms;
+    } else {
+        //TODO: Error, inform user...
+        printf("Error, index unknown.\n");
+    }
+    static ImPlotRect lims(0, 12, 0, 1);
+    if (ImPlot::BeginAlignedPlots("AlignedGroup", true)) {
+        if (ImPlot::BeginPlot(title)) {
+            ImPlot::SetupAxes("Builder images", "##y-axis");
+            if (attribute_index == CODE_AREA_BYTES_IDX || attribute_index == IMAGE_HEAP_BYTES_IDX ||
+                attribute_index == IMAGE_TOTAL_BYTES_IDX || attribute_index == PEAK_RSS_BYTES_IDX ||
+                attribute_index == RESOURCES_BYTES_IDX) {
+                ImPlot::SetupAxisFormat(ImAxis_Y1, BytesFormatter, (void *) "B");
+            } else if (attribute_index == TOTAL_BUILD_TIME_MS_IDX || attribute_index == GC_TOTAL_MS_IDX) {
+                ImPlot::SetupAxisFormat(ImAxis_Y1, SecondsFormatter, (void *) "s");
+            }
+            ImPlot::SetupAxisLinks(ImAxis_X1, &lims.X.Min, &lims.X.Max);
+            ImPlot::SetupAxesLimits(-0.5f, lims.X.Max, 0, ymax);
+            ImPlot::SetupAxisTicks(ImAxis_X1, buildTimeLabels.positions, (int) buildTimeLabels.elements);
+            ImPlot::SetNextLineStyle(quarkus_magenta_color, 1);
+            ImPlot::PlotLine(y_label, values, (int) buildTimeLabels.elements);
+            ImDrawList *draw_list = ImPlot::GetPlotDrawList();
+            if (ImPlot::IsPlotHovered()) {
+                ImPlotPoint mouse = ImPlot::GetPlotMousePos();
+                const float label_rect_left = ImPlot::PlotToPixels(mouse.x - 0.12, mouse.y).x;
+                const float label_rect_right = ImPlot::PlotToPixels(mouse.x + 0.12, mouse.y).x;
+                const float label_rect_top = ImPlot::GetPlotPos().y;
+                const float label_rect_bottom = label_rect_top + ImPlot::GetPlotSize().y;
+                int round_mouse_x = (int) round(mouse.x);
+                if (round_mouse_x < 0) {
+                    round_mouse_x = 0;
+                } else if (round_mouse_x >= buildTimeLabels.elements) {
+                    round_mouse_x = (int) buildTimeLabels.elements - 1;
+                }
+                if (cursorWithinXRegion(mouse.x)) {
+                    ImPlot::PushPlotClipRect();
+                    draw_list->AddRectFilled(
+                        ImVec2(label_rect_left, label_rect_top), ImVec2(label_rect_right, label_rect_bottom),
+                        IM_COL32(70, 149, 235, 100));
+                    ImPlot::PopPlotClipRect();
+                }
+                if (cursorWithinXRegion(mouse.x)) {
+                    ImGui::BeginTooltip();
+                    ImGui::Text("%s", buildTimeLabels.labels[round_mouse_x]);
+                    ImGui::EndTooltip();
+                }
+            }
+            ImPlot::EndPlot();
         }
-
-
-        ImPlot::PopStyleColor();
-
-
-        ImPlot::EndPlot();
+        ImPlot::EndAlignedPlots();
     }
 }
 
-
-
-void ShowDemo_BarPlots2() {
-
-    static ImGuiTableFlags flags = ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV |
-                                   ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_Reorderable;
-    ImGui::BulletText("Plots can be used inside of ImGui tables as another means of creating subplots.");
-    if (ImGui::BeginTable("##table 2", 2, flags, ImVec2(-1, 0))) {
-        ImGui::TableSetupColumn("## meh 1", ImGuiTableColumnFlags_WidthStretch, 33.0f);
-        ImGui::TableSetupColumn("## meh 2", ImGuiTableColumnFlags_WidthStretch, 33.0f);
-        //ImGui::TableSetupColumn("amd64, el8", ImGuiTableColumnFlags_WidthStretch, 33.0f);
-        ImGui::TableHeadersRow();
-        ImPlot::PushColormap(ImPlotColormap_Deep);
-        if (ImPlot::BeginAlignedPlots("AlignedGroup")) {
-            for (int row = 0; row < 3; row++) {
+void BuildTime_Plots() {
+    if (buildTimeLabels.elements > 0) {
+        static ImGuiTableFlags flags = ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV |
+                                       ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_Reorderable;
+        if (ImGui::BeginTable("##table 3", 3, flags, ImVec2(-1, 0))) {
+            ImGui::TableSetupColumn("##col1", ImGuiTableColumnFlags_WidthStretch, 33.0f);
+            ImGui::TableSetupColumn("##col2", ImGuiTableColumnFlags_WidthStretch, 33.0f);
+            ImGui::TableSetupColumn("##col3", ImGuiTableColumnFlags_WidthStretch, 33.0f);
+            ImGui::TableHeadersRow();
+            ImPlot::PushColormap(ImPlotColormap_Deep);
+            const size_t num_attributes = *(&ATTRIBUTE_NAMES + 1) - ATTRIBUTE_NAMES;
+            const ImU32 rows3 = num_attributes / 3;
+            const ImU32 rowsReminder = num_attributes % 3;
+            int row = 0;
+            for (; row < rows3; row++) {
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
                 ImGui::PushID(row);
-                plotMultiline2(row, 0);
+                plotBuildTime(row, 0, row * 3);
                 ImGui::PopID();
                 ImGui::TableSetColumnIndex(1);
                 ImGui::PushID(row);
-                plotMultiline2(row, 1);
+                plotBuildTime(row, 1, row * 3 + 1);
+                ImGui::PopID();
+                ImGui::TableSetColumnIndex(2);
+                ImGui::PushID(row);
+                plotBuildTime(row, 2, row * 3 + 2);
+                ImGui::PopID();
+            }
+            if (rowsReminder > 0) {
+                ImGui::TableNextRow();
+                row++;
+            }
+            for (int col = 0; col < rowsReminder; col++) {
+                ImGui::TableSetColumnIndex(col);
+                ImGui::PushID(row);
+                plotBuildTime(row, col, (row - 1) * 3 + col);
                 ImGui::PopID();
             }
         }
-        ImPlot::EndAlignedPlots();
         ImPlot::PopColormap();
         ImGui::EndTable();
     }
 }
 
-
-void plotMultiline3(int row, int col) {
-    static char title[17] = {};
-    sprintf(title, "## row %d col %d", row, col);
-    if (ImPlot::BeginPlot(title)) {
-        unsigned int a[COUNTC] = {2, 3, 7, 4, 6, 3, 4, 6, 4, 6, 4, 5, 6, 7, 6};
-        unsigned int b[COUNTC] = {1, 2, 5, 3, 4, 1, 2, 5, 3, 4, 4, 5, 7, 8, 9};
-        unsigned int c[COUNTC] = {1, 3, 5, 4, 5, 2, 3, 4, 3, 3, 4, 6, 6, 5, 4};
-        unsigned int d[COUNTC] = {3, 4, 6, 4, 5, 2, 4, 5, 3, 2, 3, 4, 5, 4, 4};
-        unsigned int e[COUNTC] = {2, 3, 5, 4, 6, 7, 8, 7, 6, 5, 4, 7, 5, 6, 4};
-        unsigned int f[COUNTC] = {3, 4, 6, 7, 8, 9, 8, 9, 8, 9, 10, 11, 12, 9, 10};
-        const double positions[COUNTC] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14};
-        const char *labels[COUNTC] = {"2.13.7 22.3.1.0 17","2.13.7 22.3.1.0 17","2.13.7 22.3.1.0 17","2.13.7 22.3.1.0 17","2.13.7 22.3.1.0 17","2.13.7 22.3.1.0 17","2.13.7 22.3.1.0 17","2.13.7 22.3.1.0 17","2.13.7 22.3.1.0 17","2.13.7 22.3.1.0 17","2.13.7 22.3.1.0 17","2.13.7 22.3.1.0 17","2.13.7 22.3.1.0 17","2.13.7 22.3.1.0 17","2.13.7 22.3.1.0 17"};
-        ImPlot::SetupAxes("##x-axis", "y-axis", ImPlotTextFlags_Vertical);
-        ImPlot::SetupAxesLimits(-0.5f, 9.5f, 0, COUNTC);
-        ImPlot::SetupAxisTicks(ImAxis_X1, positions, COUNTC);//, labels, false);
-        ImPlot::SetNextLineStyle(quarkus_magenta_color, 1);
-        ImPlot::PlotLine("HotSpot", a, COUNTC);
-        ImPlot::SetNextLineStyle(quarkus_blue_color, 1);
-        ImPlot::PlotLine("Native", b, COUNTC);
-        for(int i =0;i < COUNTC;i++) {
-            ImPlot::PlotText(labels[i], i, 7.0f, ImVec2(0,0), ImPlotTextFlags_Vertical);
-        }
-        ImPlot::EndPlot();
-    }
-}
-
-void ShowDemo_BarPlots3() {
-    static ImGuiTableFlags flags = ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV |
-                                   ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_Reorderable;
-    ImGui::BulletText("Plots can be used inside of ImGui tables as another means of creating subplots.");
-    if (ImGui::BeginTable("##table 3", 3, flags, ImVec2(-1, 0))) {
-        ImGui::TableSetupColumn("aarch64, el8", ImGuiTableColumnFlags_WidthStretch, 33.0f);
-        ImGui::TableSetupColumn("aarch64, el9", ImGuiTableColumnFlags_WidthStretch, 33.0f);
-        ImGui::TableSetupColumn("amd64, el8", ImGuiTableColumnFlags_WidthStretch, 33.0f);
-        ImGui::TableHeadersRow();
-        ImPlot::PushColormap(ImPlotColormap_Deep);
-        for (int row = 0; row < 6; row++) {
-            ImGui::TableNextRow();
-            ImGui::TableSetColumnIndex(0);
-            ImGui::PushID(row);
-            plotMultiline3(row, 0);
-            ImGui::PopID();
-            ImGui::TableSetColumnIndex(1);
-            ImGui::PushID(row);
-            plotMultiline3(row, 1);
-            ImGui::PopID();
-            ImGui::TableSetColumnIndex(2);
-            ImGui::PushID(row);
-            plotMultiline3(row, 2);
-            ImGui::PopID();
-        }
-        ImPlot::PopColormap();
-        ImGui::EndTable();
-    }
-}
-
-
-void ShowDemo_BarPlots() {
-    //static bool horz = false;
-    ImS32 ticks, count;
-    count = pl.elements;
-    static const std::string desNA = "# Demo data\n"
-                                     "No dataset downloaded.\n";
-    static const std::string desdata = "# Demo data\n"
-                                       "This is a demo dataset, made on a laptop with [Mandrel integration tests](https://github.com/Karm/mandrel-integration-tests/tree/master/apps)\n";
-    MarkdownHelper::Markdown(count > 0 ? desdata : desNA);
-    ticks = count / 3;
-
-    if (count > 0 && ImPlot::BeginPlot("Time to complete, shorter the better")) {
-        ImPlot::SetupLegend(ImPlotLocation_East, ImPlotLegendFlags_Outside);
-        ImPlot::SetupAxesLimits(-0.5, ticks - 0.5, 0, pl.maxSeconds + (pl.maxSeconds / 5), ImGuiCond_Always);
-        ImPlot::SetupAxes("Mandrel version, Quarkus version", "Run time [s]");
-        ImPlot::SetupAxisTicks(ImAxis_X1, pl.positions, ticks, pl.labels);
-        ImPlot::PlotBars("Native ParseOnce+", nativeParseOncePlus.secondsTimeElapsed, count, 0.2, -0.2);
-        ImPlot::PlotBars("Native ParseOnce-", nativeParseOnceMinus.secondsTimeElapsed, count, 0.2, 0);
-        ImPlot::PlotBars("HotSpot", hotspot.secondsTimeElapsed, count, 0.2, 0.2);
-        ImPlot::EndPlot();
-    }
-    if (count > 0 && ImPlot::BeginPlot("Peak RSS, shorter the better")) {
-        ImPlot::SetupLegend(ImPlotLocation_East, ImPlotLegendFlags_Outside);
-        ImPlot::SetupAxesLimits(-0.5, ticks - 0.5, 0, pl.maxMB + (pl.maxMB / 5), ImGuiCond_Always);
-        ImPlot::SetupAxes("Mandrel version, Quarkus version", "RSS [MB]");
-        ImPlot::SetupAxisTicks(ImAxis_X1, pl.positions, ticks, pl.labels);
-        ImPlot::PlotBars("Native ParseOnce+", nativeParseOncePlus.rssMB, count, 0.2, -0.2);
-        ImPlot::PlotBars("Native ParseOnce-", nativeParseOnceMinus.rssMB, count, 0.2, 0);
-        ImPlot::PlotBars("HotSpot", hotspot.rssMB, count, 0.2, 0.2);
-        ImPlot::EndPlot();
-    }
-    if (count > 0 && ImPlot::BeginPlot("Time spent in GC, shorter the better")) {
-        ImPlot::SetupLegend(ImPlotLocation_East, ImPlotLegendFlags_Outside);
-        ImPlot::SetupAxesLimits(-0.5, ticks - 0.5, 0, pl.maxSecondsInGC + (pl.maxSecondsInGC / 5), ImGuiCond_Always);
-        ImPlot::SetupAxes("Mandrel version, Quarkus version", "Seconds spent in SerialGC");
-        ImPlot::SetupAxisTicks(ImAxis_X1, pl.positions, ticks, pl.labels);
-        ImPlot::PlotBars("Native ParseOnce+", nativeParseOncePlus.secondsInGC, count, 0.2, -0.2);
-        ImPlot::PlotBars("Native ParseOnce-", nativeParseOnceMinus.secondsInGC, count, 0.2, 0);
-        ImPlot::PlotBars("HotSpot", hotspot.secondsInGC, count, 0.2, 0.2);
-        ImPlot::EndPlot();
-    }
-    if (count > 0 && ImPlot::BeginPlot("CPU instructions executed, fewer the better")) {
-        ImPlot::SetupLegend(ImPlotLocation_East, ImPlotLegendFlags_Outside);
-        ImPlot::SetupAxesLimits(-0.5, ticks - 0.5, 0, pl.maxCPUInstructions + (pl.maxCPUInstructions / 5), ImGuiCond_Always);
-        ImPlot::SetupAxes("Mandrel version, Quarkus version", "Billions of instructions");
-        ImPlot::SetupAxisTicks(ImAxis_X1, pl.positions, ticks, pl.labels);
-        ImPlot::PlotBars("Native ParseOnce+", nativeParseOncePlus.cpuInstructions, count, 0.2, -0.2);
-        ImPlot::PlotBars("Native ParseOnce-", nativeParseOnceMinus.cpuInstructions, count, 0.2, 0);
-        ImPlot::PlotBars("HotSpot", hotspot.cpuInstructions, count, 0.2, 0.2);
-        ImPlot::EndPlot();
-    }
-}
-
-void processJSON(const char *data, int length) {
-    json_object *jobj = nullptr;
+void processBuildtimeJSON(const char *data, int length) {
+    buildTimeLabels.elements = 0;
+    json_object *root;
     enum json_tokener_error jerr;
     struct json_tokener *tok = json_tokener_new();
-    do {
-        jobj = json_tokener_parse_ex(tok, data, length);
-    } while ((jerr = json_tokener_get_error(tok)) == json_tokener_continue);
-    if (jerr != json_tokener_success) {
-        // TODO: We should handle the error, talk to the user...
+    root = json_tokener_parse_ex(tok, data, length);
+    if ((jerr = json_tokener_get_error(tok)) != json_tokener_success) {
         printf("Error: %s\n", json_tokener_error_desc(jerr));
-    }
-    if (tok->char_offset < length) {
-        printf("Something else happened...\n");
         // TODO: There are extra chars. We should abort, inform user...
     }
-    if (jobj == nullptr) {
+    if (tok->char_offset < length) {
+        printf("Error: Something else happened...\n");
+        // TODO: There are extra chars. We should abort, inform user...
+    }
+    if (root == nullptr) {
         // TODO abort, pop up a message...
-        printf("JOBJ NUll....\n");
+        printf("Error: The root element is null...\n");
     }
-
-    size_t elements_count = json_object_array_length(jobj);
-    if (elements_count >= MAX_RECORDS_ROW) {
-        printf("Do some Error pop up...  Our buffer for a row is %d, while the json has %zu records", MAX_RECORDS_ROW, elements_count);
-        elements_count = MAX_RECORDS_ROW - 1;
-    }
-
-    // TODO: Use one big preallocated chunk, one big malloc at the start, one free
-    // TODO: at the end. All these little mallocs and frees are killing perf.
-    if (pl.labels != nullptr) {
-        for (int i = 0; i < elements_count / 3; i++) {
-            free(pl.labels[i]);
+    const size_t num_attributes = *(&ATTRIBUTE_NAMES + 1) - ATTRIBUTE_NAMES;
+    for (int i = 0; i < num_attributes; i++) {
+        printf("Processing %s\n", ATTRIBUTE_NAMES[i]);
+        const char *attribute_name = ATTRIBUTE_NAMES[i];
+        const json_object *array = json_object_object_get(root, attribute_name);
+        const size_t array_length = min(2, json_object_array_length(array), MAX_RECORDS_ROW);
+        if (strncmp(ATTRIBUTE_NAMES[CLASSES_JNI_IDX], attribute_name, strlen(attribute_name)) == 0) {
+            for (int j = 0; j < array_length; j++) {
+                buildTime.classes_jni[j] = json_object_get_uint64(json_object_array_get_idx(array, j));
+                if (buildTime.classes_jni[j] > buildTimeLabels.max_classes_jni) {
+                    buildTimeLabels.max_classes_jni = buildTime.classes_jni[j];
+                }
+            }
+        } else if (strncmp(ATTRIBUTE_NAMES[CLASSES_REACHABLE_IDX], attribute_name, strlen(attribute_name)) == 0) {
+            for (int j = 0; j < array_length; j++) {
+                buildTime.classes_reachable[j] = json_object_get_uint64(json_object_array_get_idx(array, j));
+                if (buildTime.classes_reachable[j] > buildTimeLabels.max_classes_reachable) {
+                    buildTimeLabels.max_classes_reachable = buildTime.classes_reachable[j];
+                }
+            }
+        } else if (strncmp(ATTRIBUTE_NAMES[CLASSES_REFLECTION_IDX], attribute_name, strlen(attribute_name)) == 0) {
+            for (int j = 0; j < array_length; j++) {
+                buildTime.classes_reflection[j] = json_object_get_uint64(json_object_array_get_idx(array, j));
+                if (buildTime.classes_reflection[j] > buildTimeLabels.max_classes_reflection) {
+                    buildTimeLabels.max_classes_reflection = buildTime.classes_reflection[j];
+                }
+            }
+        } else if (strncmp(ATTRIBUTE_NAMES[CLASSES_TOTAL_IDX], attribute_name, strlen(attribute_name)) == 0) {
+            for (int j = 0; j < array_length; j++) {
+                buildTime.classes_total[j] = json_object_get_uint64(json_object_array_get_idx(array, j));
+                if (buildTime.classes_total[j] > buildTimeLabels.max_classes_total) {
+                    buildTimeLabels.max_classes_total = buildTime.classes_total[j];
+                }
+            }
+        } else if (strncmp(ATTRIBUTE_NAMES[CODE_AREA_BYTES_IDX], attribute_name, strlen(attribute_name)) == 0) {
+            for (int j = 0; j < array_length; j++) {
+                buildTime.code_area_bytes[j] = json_object_get_uint64(json_object_array_get_idx(array, j));
+                if (buildTime.code_area_bytes[j] > buildTimeLabels.max_code_area_bytes) {
+                    buildTimeLabels.max_code_area_bytes = buildTime.code_area_bytes[j];
+                }
+            }
+        } else if (strncmp(ATTRIBUTE_NAMES[FIELDS_JNI_IDX], attribute_name, strlen(attribute_name)) == 0) {
+            for (int j = 0; j < array_length; j++) {
+                buildTime.fields_jni[j] = json_object_get_uint64(json_object_array_get_idx(array, j));
+                if (buildTime.fields_jni[j] > buildTimeLabels.max_fields_jni) {
+                    buildTimeLabels.max_fields_jni = buildTime.fields_jni[j];
+                }
+            }
+        } else if (strncmp(ATTRIBUTE_NAMES[FIELDS_REACHABLE_IDX], attribute_name, strlen(attribute_name)) == 0) {
+            for (int j = 0; j < array_length; j++) {
+                buildTime.fields_reachable[j] = json_object_get_uint64(json_object_array_get_idx(array, j));
+                if (buildTime.fields_reachable[j] > buildTimeLabels.max_fields_reachable) {
+                    buildTimeLabels.max_fields_reachable = buildTime.fields_reachable[j];
+                }
+            }
+        } else if (strncmp(ATTRIBUTE_NAMES[FIELDS_REFLECTION_IDX], attribute_name, strlen(attribute_name)) == 0) {
+            for (int j = 0; j < array_length; j++) {
+                buildTime.fields_reflection[j] = json_object_get_uint64(json_object_array_get_idx(array, j));
+                if (buildTime.fields_reflection[j] > buildTimeLabels.max_fields_reflection) {
+                    buildTimeLabels.max_fields_reflection = buildTime.fields_reflection[j];
+                }
+            }
+        } else if (strncmp(ATTRIBUTE_NAMES[FIELDS_TOTAL_IDX], attribute_name, strlen(attribute_name)) == 0) {
+            for (int j = 0; j < array_length; j++) {
+                buildTime.fields_total[j] = json_object_get_uint64(json_object_array_get_idx(array, j));
+                if (buildTime.fields_total[j] > buildTimeLabels.max_fields_total) {
+                    buildTimeLabels.max_fields_total = buildTime.fields_total[j];
+                }
+            }
+        } else if (strncmp(ATTRIBUTE_NAMES[GC_TOTAL_MS_IDX], attribute_name, strlen(attribute_name)) == 0) {
+            for (int j = 0; j < array_length; j++) {
+                buildTime.gc_total_ms[j] = json_object_get_uint64(json_object_array_get_idx(array, j));
+                if (buildTime.gc_total_ms[j] > buildTimeLabels.max_gc_total_ms) {
+                    buildTimeLabels.max_gc_total_ms = buildTime.gc_total_ms[j];
+                }
+            }
+        } else if (strncmp(ATTRIBUTE_NAMES[IMAGE_HEAP_BYTES_IDX], attribute_name, strlen(attribute_name)) == 0) {
+            for (int j = 0; j < array_length; j++) {
+                buildTime.image_heap_bytes[j] = json_object_get_uint64(json_object_array_get_idx(array, j));
+                if (buildTime.image_heap_bytes[j] > buildTimeLabels.max_image_heap_bytes) {
+                    buildTimeLabels.max_image_heap_bytes = buildTime.image_heap_bytes[j];
+                }
+            }
+        } else if (strncmp(ATTRIBUTE_NAMES[IMAGE_TOTAL_BYTES_IDX], attribute_name, strlen(attribute_name)) == 0) {
+            for (int j = 0; j < array_length; j++) {
+                buildTime.image_total_bytes[j] = json_object_get_uint64(json_object_array_get_idx(array, j));
+                if (buildTime.image_total_bytes[j] > buildTimeLabels.max_image_total_bytes) {
+                    buildTimeLabels.max_image_total_bytes = buildTime.image_total_bytes[j];
+                }
+            }
+        } else if (strncmp(ATTRIBUTE_NAMES[METHODS_JNI_IDX], attribute_name, strlen(attribute_name)) == 0) {
+            for (int j = 0; j < array_length; j++) {
+                buildTime.methods_jni[j] = json_object_get_uint64(json_object_array_get_idx(array, j));
+                if (buildTime.methods_jni[j] > buildTimeLabels.max_methods_jni) {
+                    buildTimeLabels.max_methods_jni = buildTime.methods_jni[j];
+                }
+            }
+        } else if (strncmp(ATTRIBUTE_NAMES[METHODS_REACHABLE_IDX], attribute_name, strlen(attribute_name)) == 0) {
+            for (int j = 0; j < array_length; j++) {
+                buildTime.methods_reachable[j] = json_object_get_uint64(json_object_array_get_idx(array, j));
+                if (buildTime.methods_reachable[j] > buildTimeLabels.max_methods_reachable) {
+                    buildTimeLabels.max_methods_reachable = buildTime.methods_reachable[j];
+                }
+            }
+        } else if (strncmp(ATTRIBUTE_NAMES[METHODS_REFLECTION_IDX], attribute_name, strlen(attribute_name)) == 0) {
+            for (int j = 0; j < array_length; j++) {
+                buildTime.methods_reflection[j] = json_object_get_uint64(json_object_array_get_idx(array, j));
+                if (buildTime.methods_reflection[j] > buildTimeLabels.max_methods_reflection) {
+                    buildTimeLabels.max_methods_reflection = buildTime.methods_reflection[j];
+                }
+            }
+        } else if (strncmp(ATTRIBUTE_NAMES[METHODS_TOTAL_IDX], attribute_name, strlen(attribute_name)) == 0) {
+            for (int j = 0; j < array_length; j++) {
+                buildTime.methods_total[j] = json_object_get_uint64(json_object_array_get_idx(array, j));
+                if (buildTime.methods_total[j] > buildTimeLabels.max_methods_total) {
+                    buildTimeLabels.max_methods_total = buildTime.methods_total[j];
+                }
+            }
+        } else if (strncmp(ATTRIBUTE_NAMES[PEAK_RSS_BYTES_IDX], attribute_name, strlen(attribute_name)) == 0) {
+            for (int j = 0; j < array_length; j++) {
+                buildTime.peak_rss_bytes[j] = json_object_get_uint64(json_object_array_get_idx(array, j));
+                if (buildTime.peak_rss_bytes[j] > buildTimeLabels.max_peak_rss_bytes) {
+                    buildTimeLabels.max_peak_rss_bytes = buildTime.peak_rss_bytes[j];
+                }
+            }
+        } else if (strncmp(ATTRIBUTE_NAMES[RESOURCES_BYTES_IDX], attribute_name, strlen(attribute_name)) == 0) {
+            for (int j = 0; j < array_length; j++) {
+                buildTime.resources_bytes[j] = json_object_get_uint64(json_object_array_get_idx(array, j));
+                if (buildTime.resources_bytes[j] > buildTimeLabels.max_resources_bytes) {
+                    buildTimeLabels.max_resources_bytes = buildTime.resources_bytes[j];
+                }
+            }
+        } else if (strncmp(ATTRIBUTE_NAMES[RESOURCES_COUNT_IDX], attribute_name, strlen(attribute_name)) == 0) {
+            for (int j = 0; j < array_length; j++) {
+                buildTime.resources_count[j] = json_object_get_uint64(json_object_array_get_idx(array, j));
+                if (buildTime.resources_count[j] > buildTimeLabels.max_resources_count) {
+                    buildTimeLabels.max_resources_count = buildTime.resources_count[j];
+                }
+            }
+        } else if (strncmp(ATTRIBUTE_NAMES[TOTAL_BUILD_TIME_MS_IDX], attribute_name, strlen(attribute_name)) == 0) {
+            for (int j = 0; j < array_length; j++) {
+                buildTime.total_build_time_ms[j] = json_object_get_uint64(json_object_array_get_idx(array, j));
+                if (buildTime.total_build_time_ms[j] > buildTimeLabels.max_total_build_time_ms) {
+                    buildTimeLabels.max_total_build_time_ms = buildTime.total_build_time_ms[j];
+                }
+            }
         }
-        free(pl.labels);
     }
-    pl.labels = (char **) (malloc(sizeof(char) * elements_count / 3));
-    pl.elements = elements_count;
-    int hotspot_c = 0;
-    int nativeParseOncePlus_c = 0;
-    int nativeParseOnceMinus_c = 0;
-
-    for (int i = 0; i < elements_count; i++) {
-        json_object *element = json_object_array_get_idx(jobj, i);
-
-        json_object *secondsTimeElapsed_ = json_object_object_get(element, "secondsTimeElapsed");
-        double secondsTimeElapsed = json_object_get_double(secondsTimeElapsed_);
-
-        json_object *mandrelVersion_ = json_object_object_get(element, "mandrelVersion");
-        const char *mandrelVersion = json_object_get_string(mandrelVersion_);
-
-        json_object *quarkusVersion_ = json_object_object_get(element, "quarkusVersion");
-        const char *quarkusVersion = json_object_get_string(quarkusVersion_);
-
-        json_object *file_ = json_object_object_get(element, "file");
-        const char *file = json_object_get_string(file_);
-
-        json_object *rssKb_ = json_object_object_get(element, "rssKb");
-        int rssMB = json_object_get_int(rssKb_) / 1024;
-
-        json_object *instructionsG_ = json_object_object_get(element, "instructions");
-        ImU32 instructionsG = json_object_get_uint64(instructionsG_) / 1000000000;
-
-        json_object *secondsInGC_ = json_object_object_get(element, "timeSpentInGCs");
-        int secondsInGC = json_object_get_double(secondsInGC_);
-
-        char *version = (char *) malloc(strlen(mandrelVersion) + strlen(quarkusVersion) + 2);
-        strcpy(version, mandrelVersion);
-        strcat(version, ",");
-        strcat(version, quarkusVersion);
-
-        if (strncmp(file, "java", 4) == 0) {
-            hotspot.secondsTimeElapsed[hotspot_c] = (ImU32) round(secondsTimeElapsed);
-            hotspot.rssMB[hotspot_c] = rssMB;
-            hotspot.cpuInstructions[hotspot_c] = instructionsG;
-            hotspot.secondsInGC[hotspot_c] = secondsInGC;
-            pl.labels[hotspot_c] = version;
-            pl.positions[hotspot_c] = hotspot_c;
-            hotspot_c++;
-        } else if (strstr(file, "+ParseOnce")) {
-            nativeParseOncePlus.secondsTimeElapsed[nativeParseOncePlus_c] = (ImU32) round(secondsTimeElapsed);
-            nativeParseOncePlus.rssMB[nativeParseOncePlus_c] = rssMB;
-            nativeParseOncePlus.cpuInstructions[nativeParseOncePlus_c] = instructionsG;
-            nativeParseOncePlus.secondsInGC[nativeParseOncePlus_c] = secondsInGC;
-            nativeParseOncePlus_c++;
-        } else if (strstr(file, "-ParseOnce")) {
-            nativeParseOnceMinus.secondsTimeElapsed[nativeParseOnceMinus_c] = (ImU32) round(secondsTimeElapsed);
-            nativeParseOnceMinus.rssMB[nativeParseOnceMinus_c] = rssMB;
-            nativeParseOnceMinus.cpuInstructions[nativeParseOnceMinus_c] = instructionsG;
-            nativeParseOnceMinus.secondsInGC[nativeParseOnceMinus_c] = secondsInGC;
-            nativeParseOnceMinus_c++;
-        } else {
-            printf("Error, do something about it. Pop up?");
-        }
+    json_object *array = json_object_object_get(root, "tag");
+    if (array == nullptr) {
+        printf("Error: No tag array found in the JSON file.\n");
+    } else {
+        printf("Success: Should be fne.\n");
     }
-
-    pl.maxSeconds = minmax(true, 3,
-                           *std::max_element(hotspot.secondsTimeElapsed, hotspot.secondsTimeElapsed + hotspot_c),
-                           *std::max_element(nativeParseOnceMinus.secondsTimeElapsed, nativeParseOnceMinus.secondsTimeElapsed + nativeParseOnceMinus_c),
-                           *std::max_element(nativeParseOncePlus.secondsTimeElapsed, nativeParseOncePlus.secondsTimeElapsed + nativeParseOncePlus_c));
-    pl.maxMB = minmax(true, 3,
-                      *std::max_element(hotspot.rssMB, hotspot.rssMB + hotspot_c),
-                      *std::max_element(nativeParseOnceMinus.rssMB, nativeParseOnceMinus.rssMB + nativeParseOnceMinus_c),
-                      *std::max_element(nativeParseOncePlus.rssMB, nativeParseOncePlus.rssMB + nativeParseOncePlus_c));
-    pl.maxCPUInstructions = minmax(true, 3,
-                                   *std::max_element(hotspot.cpuInstructions, hotspot.cpuInstructions + hotspot_c),
-                                   *std::max_element(nativeParseOnceMinus.cpuInstructions, nativeParseOnceMinus.cpuInstructions + nativeParseOnceMinus_c),
-                                   *std::max_element(nativeParseOncePlus.cpuInstructions, nativeParseOncePlus.cpuInstructions + nativeParseOncePlus_c));
-    pl.maxSecondsInGC = minmax(true, 3,
-                               *std::max_element(hotspot.secondsInGC, hotspot.secondsInGC + hotspot_c),
-                               *std::max_element(nativeParseOnceMinus.secondsInGC, nativeParseOnceMinus.secondsInGC + nativeParseOnceMinus_c),
-                               *std::max_element(nativeParseOncePlus.secondsInGC, nativeParseOncePlus.secondsInGC + nativeParseOncePlus_c));
+    const size_t array_length = min(2, json_object_array_length(array), MAX_RECORDS_ROW);
+    // If I comment this printf, it crashes :-)
+    printf("array_length: %zu\n", array_length);
+    for (int j = 0; j < array_length; j++) {
+        const char *tag_ = json_object_get_string(json_object_array_get_idx(array, j));
+        size_t tag_length = strlen(tag_);
+        memset(buildTimeLabels.labels[j], 0, tag_length);
+        strncpy(buildTimeLabels.labels[j], tag_, tag_length);
+        buildTimeLabels.positions[j] = j;// 1 element has 1 position
+    }
     json_tokener_free(tok);
+    buildTimeLabels.elements = array_length;
 }
 
-
-void downloadSucceeded(emscripten_fetch_t *fetch) {
-    processJSON(fetch->data, fetch->numBytes);
+void downloadBuildtimeSucceeded(emscripten_fetch_t *fetch) {
+    processBuildtimeJSON(fetch->data, fetch->numBytes);
     emscripten_fetch_close(fetch);// Free data associated with the fetch.
-    globals.download_in_progress = false;
-    globals.download_progress_bar = 0;
-    globals.download_error = false;
-    globals.download_timestamp = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    downloads.download_in_progress = false;
+    downloads.download_progress_bar = 0;
+    downloads.download_error = false;
+    downloads.download_timestamp = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
 }
 
 void downloadProgress(emscripten_fetch_t *fetch) {
-    globals.download_in_progress = true;
-    globals.download_error = false;
+    downloads.download_in_progress = true;
+    downloads.download_error = false;
     if (fetch->totalBytes) {
         //printf("Downloading %s.. %.2f%% complete.\n", fetch->url, fetch->dataOffset * 100.0 / fetch->totalBytes);
-        globals.download_progress_bar = (float) fetch->dataOffset / (float) fetch->totalBytes;
+        downloads.download_progress_bar = (float) fetch->dataOffset / (float) fetch->totalBytes;
     } else {
         // We don't know, so Windows 95 copy files progress bar...
-        if (globals.download_progress_bar >= 1) {
-            globals.download_progress_bar = 0;
+        if (downloads.download_progress_bar >= 1) {
+            downloads.download_progress_bar = 0;
         }
-        globals.download_progress_bar += .01f;
+        downloads.download_progress_bar += .01f;
         //printf("Downloading %s.. %lld bytes complete.\n", fetch->url, fetch->dataOffset + fetch->numBytes);
     }
 }
@@ -388,10 +551,10 @@ void downloadProgress(emscripten_fetch_t *fetch) {
 void downloadFailed(emscripten_fetch_t *fetch) {
     printf("Downloading %s failed, HTTP failure status code: %d.\n", fetch->url, fetch->status);
     emscripten_fetch_close(fetch);// Also free data on failure.
-    globals.download_error = true;
-    globals.download_progress_bar = 0;
-    globals.download_in_progress = false;
-    globals.download_timestamp = NULL;
+    downloads.download_error = true;
+    downloads.download_progress_bar = 0;
+    downloads.download_in_progress = false;
+    downloads.download_timestamp = NULL;
 }
 
 //void CommandGui(AppState &state) {
@@ -403,71 +566,61 @@ void CommandGui() {
         ImGui::SetTooltip("Quarkus Mandrel perf charts demo...");
     }
     ImGui::Separator();
-    //ImGui::SameLine();
-    if (ImGui::Button("Download dataset now")) {
-        //state.rocketState = AppState::RocketState::Preparing;
-        //state.rocket_progress = state.rocket_progress + 0.4f;
-        if (!globals.download_in_progress) {
+    if (ImGui::Button("Download buildtime dataset")) {
+        if (!downloads.download_in_progress) {
             emscripten_fetch_attr_t attr;
             emscripten_fetch_attr_init(&attr);
             strcpy(attr.requestMethod, "GET");
             attr.attributes = EMSCRIPTEN_FETCH_LOAD_TO_MEMORY;
-            attr.onsuccess = downloadSucceeded;
+            attr.onsuccess = downloadBuildtimeSucceeded;
             attr.onerror = downloadFailed;
             attr.onprogress = downloadProgress;
-            emscripten_fetch(&attr, "perf_data.json");
+            emscripten_fetch(&attr, "build_perf_data.json");
         }
     }
-    if (ImGui::IsItemHovered() && globals.download_in_progress) {
+    if (ImGui::IsItemHovered() && downloads.download_in_progress) {
         ImGui::SetTooltip("Download is already in progress...");
+    }
+    if (buildTimeLabels.elements > 0 && !downloads.download_in_progress) {
+        static bool show_legend = false;
+        ImGui::Checkbox("List the whole legend", &show_legend);
+        if (show_legend) {
+            for (int i = 0; i < buildTimeLabels.elements; i++) {
+                ImGui::TextWrapped("%d%s - %s", i, (i < 10 ? " " : ""), buildTimeLabels.labels[i]);
+            }
+        }
     }
 }
 
-//void MainWindow(AppState &state) {
-void MainWindow() {
-    //ImGui::Begin("Charts", nullptr, ImGuiWindowFlags_MenuBar);
-    //ImGui::Text("Downloaded text: %s", test_data);
-    ShowDemo_BarPlots();
-}
-
-//void StatusBarGui(const AppState &appState) {
 void StatusBarGui() {
-    //  if (appState.rocketState == AppState::RocketState::Preparing) {
-    //    ImGui::Text("Rocket completion: ");
-    //  ImGui::SameLine();
-    //ImGui::ProgressBar(appState.rocket_progress, ImVec2(100.f, 15.f));
-    //}
     ImGui::Text("Dataset status:");
     ImGui::SameLine();
-    if (globals.download_in_progress) {
-        ImGui::ProgressBar(globals.download_progress_bar, ImVec2(100.f, 15.f));
+    if (downloads.download_in_progress) {
+        ImGui::ProgressBar(downloads.download_progress_bar, ImVec2(100.f, 15.f));
     } else {
-        if (globals.download_timestamp == NULL) {
-            if (globals.download_error) {
+        if (downloads.download_timestamp == NULL) {
+            if (downloads.download_error) {
                 ImGui::Text("Failed to download data.");
             } else {
                 ImGui::Text("No downloaded data.");
             }
         } else {
-            ImGui::Text("Downloaded on %s", ctime(&(globals.download_timestamp)));
+            ImGui::Text("Downloaded on %s", ctime(&(downloads.download_timestamp)));
         }
     }
     static std::string credit = "Proudly powered by [imgui](https://github.com/ocornut/imgui), "
                                 "[hello_imgui](https://github.com/pthom/hello_imgui) and "
                                 "[implot](https://github.com/epezent/implot).";
     ImGui::SameLine(ImGui::GetIO().DisplaySize.x - 420.f);
-    //ImGui::SameLine();
     MarkdownHelper::Markdown(credit);
     ImGui::SameLine();
 }
 
 int main(int, char **) {
-    //AppState appState;
     HelloImGui::RunnerParams runnerParams;
     runnerParams.appWindowParams.windowTitle = "Collector";
     runnerParams.appWindowParams.windowSize = {800, 600};
     runnerParams.imGuiWindowParams.showStatusBar = true;
-    //runnerParams.callbacks.ShowStatus = [&appState] { StatusBarGui(appState); };
     runnerParams.callbacks.ShowStatus = StatusBarGui;
     runnerParams.imGuiWindowParams.showMenuBar = true;
     runnerParams.callbacks.LoadAdditionalFonts = MarkdownHelper::LoadFonts;
@@ -483,33 +636,15 @@ int main(int, char **) {
     HelloImGui::DockableWindow commandsWindow;
     commandsWindow.label = "Operations";
     commandsWindow.dockSpaceName = "LeftSpace";
-    //commandsWindow.GuiFonction = [&appState]() { CommandGui(appState); };
     commandsWindow.GuiFonction = CommandGui;
 
-    HelloImGui::DockableWindow chartsWindow;
-    chartsWindow.label = "ParseOnce charts";
-    chartsWindow.canBeClosed = false;
-    chartsWindow.dockSpaceName = "MainDockSpace";
-    //chartsWindow.GuiFonction = [&appState] { MainWindow(appState); };
-    chartsWindow.GuiFonction = MainWindow;
+    HelloImGui::DockableWindow buildTimeWindow;
+    buildTimeWindow.label = "Build time charts";
+    buildTimeWindow.canBeClosed = false;
+    buildTimeWindow.dockSpaceName = "MainDockSpace";
+    buildTimeWindow.GuiFonction = BuildTime_Plots;
 
-    HelloImGui::DockableWindow charts2Window;
-    charts2Window.label = "Perf demo charts 2";
-    charts2Window.canBeClosed = false;
-    charts2Window.dockSpaceName = "MainDockSpace";
-    //chartsWindow.GuiFonction = [&appState] { MainWindow(appState); };
-    charts2Window.GuiFonction = ShowDemo_BarPlots2;
-
-
-    HelloImGui::DockableWindow charts3Window;
-    charts3Window.label = "Perf demo charts 3";
-    charts3Window.canBeClosed = false;
-    charts3Window.dockSpaceName = "MainDockSpace";
-    //chartsWindow.GuiFonction = [&appState] { MainWindow(appState); };
-    charts3Window.GuiFonction = ShowDemo_BarPlots3;
-
-
-    runnerParams.dockingParams.dockableWindows = {commandsWindow, chartsWindow, charts2Window, charts3Window};
+    runnerParams.dockingParams.dockableWindows = {commandsWindow, buildTimeWindow};//, chartsWindow, charts2Window, charts3Window};
 
     auto implotContext = ImPlot::CreateContext();
     HelloImGui::Run(runnerParams);
