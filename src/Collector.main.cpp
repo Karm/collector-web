@@ -9,8 +9,9 @@
 #include <json.h>
 
 #define MAX_RECORDS_ROW 1024
+#define MAX_LINES_CHART 5
 #define MAX_LABEL_LENGTH 256
-#define MAX_MARGIN(x) x + x / 3
+#define MAX_MARGIN(x) (x + x / 3)
 
 struct Downloads {
     float download_progress_bar = 0.f;
@@ -40,7 +41,7 @@ struct BuildTime {
     ImU64 image_heap_bytes[MAX_RECORDS_ROW];
     ImU64 image_total_bytes[MAX_RECORDS_ROW];
     ImU64 code_area_bytes[MAX_RECORDS_ROW];
-} buildTime;
+} buildTime, buildTimeContemporary[MAX_LINES_CHART];
 
 struct BuildTimeLabels {
     ImU64 max_classes_jni = 0;
@@ -66,7 +67,12 @@ struct BuildTimeLabels {
     char labels[MAX_RECORDS_ROW][MAX_LABEL_LENGTH]{};
     double positions[MAX_RECORDS_ROW]{};
     ImU32 elements = 0;
-} buildTimeLabels;
+} buildTimeLabels, buildTimeLabelsContemporary[MAX_LINES_CHART];
+
+struct BuildTimeContemporaryLines {
+    ImU32 elements = 0;
+    char labels[MAX_RECORDS_ROW][MAX_LABEL_LENGTH]{};
+} buildTimeContemporaryLines;
 
 #define CLASSES_JNI_IDX 6
 #define CLASSES_REACHABLE_IDX 7
@@ -292,6 +298,51 @@ void plotBuildTime(int row, int col, int attribute_index) {
     }
 }
 
+void BuildTimeContemporary_Plots() {
+    if (buildTimeLabels.elements > 0) {
+        static ImGuiTableFlags flags = ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV |
+                                       ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_Reorderable;
+        if (ImGui::BeginTable("##table 3", 3, flags, ImVec2(-1, 0))) {
+            ImGui::TableSetupColumn("##col1", ImGuiTableColumnFlags_WidthStretch, 33.0f);
+            ImGui::TableSetupColumn("##col2", ImGuiTableColumnFlags_WidthStretch, 33.0f);
+            ImGui::TableSetupColumn("##col3", ImGuiTableColumnFlags_WidthStretch, 33.0f);
+            ImGui::TableHeadersRow();
+            ImPlot::PushColormap(ImPlotColormap_Deep);
+            const size_t num_attributes = *(&ATTRIBUTE_NAMES + 1) - ATTRIBUTE_NAMES;
+            const ImU32 rows3 = num_attributes / 3;
+            const ImU32 rowsReminder = num_attributes % 3;
+            int row = 0;
+            for (; row < rows3; row++) {
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::PushID(row);
+                plotBuildTime(row, 0, row * 3);
+                ImGui::PopID();
+                ImGui::TableSetColumnIndex(1);
+                ImGui::PushID(row);
+                plotBuildTime(row, 1, row * 3 + 1);
+                ImGui::PopID();
+                ImGui::TableSetColumnIndex(2);
+                ImGui::PushID(row);
+                plotBuildTime(row, 2, row * 3 + 2);
+                ImGui::PopID();
+            }
+            if (rowsReminder > 0) {
+                ImGui::TableNextRow();
+                row++;
+            }
+            for (int col = 0; col < rowsReminder; col++) {
+                ImGui::TableSetColumnIndex(col);
+                ImGui::PushID(row);
+                plotBuildTime(row, col, (row - 1) * 3 + col);
+                ImGui::PopID();
+            }
+        }
+        ImPlot::PopColormap();
+        ImGui::EndTable();
+    }
+}
+
 void BuildTime_Plots() {
     if (buildTimeLabels.elements > 0) {
         static ImGuiTableFlags flags = ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV |
@@ -355,12 +406,43 @@ void processBuildtimeJSON(const char *data, int length) {
         // TODO abort, pop up a message...
         printf("Error: The root element is null...\n");
     }
+
+    //TODO:
+    // Use hashmap from https://github.com/nothings/stb/blob/master/stb_ds.h   ?
+
+    const json_object *tag_array = json_object_object_get(root, "tag");
+    if (tag_array == nullptr) {
+        printf("Error: No tag array found in the JSON file.\n");
+    }
+    const json_object *created_array = json_object_object_get(root, "created_at");
+    if (created_array == nullptr) {
+        printf("Error: No created_at array found in the JSON file.\n");
+    }
+
+    const size_t array_length = min(2, json_object_array_length(tag_array), MAX_RECORDS_ROW);
+    // If I comment this printf, it crashes :-)
+    printf("array_length: %zu\n", array_length);
+    for (int j = 0; j < array_length; j++) {
+        char *tag_ = const_cast<char *>(json_object_get_string(json_object_array_get_idx(tag_array, j)));
+        const char *created_at_ = json_object_get_string(json_object_array_get_idx(created_array, j));
+        char *tmp_ptr;
+        char *builder_image = strtok_r(tag_, ",", &tmp_ptr);
+        char *quarkus_version = strtok_r(nullptr, ",", &tmp_ptr);
+        memset(buildTimeLabels.labels[j], 0, MAX_LABEL_LENGTH);
+        sprintf(buildTimeLabels.labels[j], "Image: %s\nQuarkus: %s\nTimestamp: %s", builder_image, quarkus_version, created_at_);
+        buildTimeLabels.positions[j] = j;// 1 element has 1 position
+    }
+
     const size_t num_attributes = *(&ATTRIBUTE_NAMES + 1) - ATTRIBUTE_NAMES;
+
+    // TODO: Full picture - would new builds replace the older ones?
+
+
     for (int i = 0; i < num_attributes; i++) {
         printf("Processing %s\n", ATTRIBUTE_NAMES[i]);
         const char *attribute_name = ATTRIBUTE_NAMES[i];
         const json_object *array = json_object_object_get(root, attribute_name);
-        const size_t array_length = min(2, json_object_array_length(array), MAX_RECORDS_ROW);
+        //const size_t array_length = min(2, json_object_array_length(array), MAX_RECORDS_ROW);
         if (strncmp(ATTRIBUTE_NAMES[CLASSES_JNI_IDX], attribute_name, strlen(attribute_name)) == 0) {
             for (int j = 0; j < array_length; j++) {
                 buildTime.classes_jni[j] = json_object_get_uint64(json_object_array_get_idx(array, j));
@@ -503,23 +585,12 @@ void processBuildtimeJSON(const char *data, int length) {
             }
         }
     }
-    json_object *array = json_object_object_get(root, "tag");
-    if (array == nullptr) {
-        printf("Error: No tag array found in the JSON file.\n");
-    } else {
-        printf("Success: Should be fne.\n");
-    }
-    const size_t array_length = min(2, json_object_array_length(array), MAX_RECORDS_ROW);
-    // If I comment this printf, it crashes :-)
-    printf("array_length: %zu\n", array_length);
-    for (int j = 0; j < array_length; j++) {
-        const char *tag_ = json_object_get_string(json_object_array_get_idx(array, j));
-        size_t tag_length = strlen(tag_);
-        memset(buildTimeLabels.labels[j], 0, tag_length);
-        strncpy(buildTimeLabels.labels[j], tag_, tag_length);
-        buildTimeLabels.positions[j] = j;// 1 element has 1 position
-    }
+
+
+
     json_tokener_free(tok);
+
+
     buildTimeLabels.elements = array_length;
 }
 
@@ -639,12 +710,18 @@ int main(int, char **) {
     commandsWindow.GuiFonction = CommandGui;
 
     HelloImGui::DockableWindow buildTimeWindow;
-    buildTimeWindow.label = "Build time charts";
+    buildTimeWindow.label = "Build time: Full picture";
     buildTimeWindow.canBeClosed = false;
     buildTimeWindow.dockSpaceName = "MainDockSpace";
     buildTimeWindow.GuiFonction = BuildTime_Plots;
 
-    runnerParams.dockingParams.dockableWindows = {commandsWindow, buildTimeWindow};//, chartsWindow, charts2Window, charts3Window};
+    HelloImGui::DockableWindow buildTimeContemporaryWindow;
+    buildTimeContemporaryWindow.label = "Build time: Contemporary images";
+    buildTimeContemporaryWindow.canBeClosed = false;
+    buildTimeContemporaryWindow.dockSpaceName = "MainDockSpace";
+    buildTimeContemporaryWindow.GuiFonction = BuildTimeContemporary_Plots;
+
+    runnerParams.dockingParams.dockableWindows = {commandsWindow, buildTimeWindow, buildTimeContemporaryWindow};//, chartsWindow, charts2Window, charts3Window};
 
     auto implotContext = ImPlot::CreateContext();
     HelloImGui::Run(runnerParams);
