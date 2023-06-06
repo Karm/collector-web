@@ -52,7 +52,14 @@ FetchContent_Declare(
   SOURCE_DIR ${PROJECT_SOURCE_DIR}/external/json-c
   BINARY_DIR ${PROJECT_BINARY_DIR}/external/json-c
 )
-# The goal is not to download everything again just becasue you need to
+FetchContent_Declare(
+  clipboard
+  URL       https://github.com/Armchair-Software/emscripten-browser-clipboard/archive/df4b70488b6024ff0ad27dda10bf030341c4035a.zip
+  URL_HASH  SHA1=d45d8bb7e473d758a88409736b63d4229602e97e
+  SOURCE_DIR ${PROJECT_SOURCE_DIR}/external/clipboard
+  BINARY_DIR ${PROJECT_BINARY_DIR}/external/clipboard
+)
+# The goal is not to download everything again just because you need to
 # re-import the CMake project into an IDE or something.
 # When something goes south, manually deleting the ./external directory is a good move.
 FetchContent_GetProperties(hello_imgui)
@@ -83,12 +90,16 @@ FetchContent_GetProperties(json-c)
 if (NOT json-c_POPULATED AND NOT EXISTS "${PROJECT_SOURCE_DIR}/external/json-c")
   FetchContent_Populate(json-c)
 endif()
-
-set(CMAKE_CXX_STANDARD 14)
+FetchContent_GetProperties(clipboard)
+if (NOT clipboard_POPULATED AND NOT EXISTS "${PROJECT_SOURCE_DIR}/external/clipboard")
+  FetchContent_Populate(clipboard)
+endif()
+set(CMAKE_CXX_STANDARD 17)
 
 # Debugging in Firefox/Chrome, including sources, still some hiccups
-set(CMAKE_BUILD_TYPE DEBUG)
-set(EMCC_DEBUG 1)
+set(CMAKE_BUILD_TYPE RELEASE)
+set(EMCC_DEBUG 0)
+#Manually copy src dir to web root if needed.
 #set(CMAKE_C_FLAGS_DEBUG -g -O0 -gsource-map --source-map-base http://localhost:7777/)
 #set(CMAKE_CXX_FLAGS_DEBUG -g -O0 -gsource-map --source-map-base http://localhost:7777/)
 add_link_options("SHELL:-gsource-map")
@@ -99,6 +110,8 @@ add_compile_definitions("ImDrawIdx=unsigned int")
 
 # Use https://emscripten.org/docs/api_reference/fetch.html
 add_link_options("SHELL:-s FETCH=1")
+# Needed to make clipboard work, i.e. to hook ccall with listener
+add_link_options("SHELL:-s \"EXPORTED_RUNTIME_METHODS=['ccall', 'cwrap']\"")
 
 # HelloImgui framework settings
 # Select rendering backend:
@@ -116,6 +129,7 @@ set(implot_dir ${CMAKE_CURRENT_LIST_DIR}/external/implot)
 set(textedit_dir ${CMAKE_CURRENT_LIST_DIR}/external/ImGuiColorTextEdit)
 set(fplus_dir ${CMAKE_CURRENT_LIST_DIR}/external/FunctionalPlus/include)
 set(imgui_markdown_dir ${CMAKE_CURRENT_LIST_DIR}/external/imgui_markdown)
+set(clipboard_dir ${CMAKE_CURRENT_LIST_DIR}/external/clipboard)
 
 # Stop JSON C from trying to build shared libs
 unset(BUILD_SHARED_LIBS)
@@ -137,6 +151,7 @@ hello_imgui_add_app(collector-web
     ${implot_dir}/implot.cpp
     ${implot_dir}/implot_items.cpp
     ${json_c_processed_dir}/json.h
+    ${clipboard_dir}/emscripten_browser_clipboard.h
     )
 target_include_directories(collector-web PRIVATE
     ${implot_dir}
@@ -145,6 +160,7 @@ target_include_directories(collector-web PRIVATE
     ${imgui_markdown_dir}
     ${json_c_dir}
     ${json_c_processed_dir}
+    ${clipboard_dir}
 )
 
 target_link_libraries(collector-web PRIVATE json-c)
@@ -152,5 +168,7 @@ target_link_libraries(collector-web PRIVATE json-c)
 # Test data, TODO: Remove...
 file(COPY ${CMAKE_CURRENT_LIST_DIR}/data/perf_data.json
      DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
+file(COPY ${CMAKE_CURRENT_LIST_DIR}/data/build_perf_data.json
+        DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
 file(COPY ${CMAKE_CURRENT_LIST_DIR}/data/favicon.ico
      DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
