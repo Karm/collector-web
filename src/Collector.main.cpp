@@ -684,7 +684,7 @@ void APIKeyModal() {
         // Multiline text input might look better, but the pasted text doesn't wrap, because token is
         // a single giant word. TODO: Make it wrap nicely.
         // ImGui::InputTextMultiline("##APIKey", api_token, IM_ARRAYSIZE(api_token), ImVec2(ImGui::GetTextLineHeight() * 16, ImGui::GetTextLineHeight() * 16));
-        ImGui::TextWrapped("Your API key is stored as a SameSite=Strict plaintext cookie.");
+        ImGui::TextWrapped("Your API key is stored as a cookie. Don't have one? Drop an email to karm@redhat.com");
         ImGui::Separator();
         ImGui::Text("Current API key:");
         ImGui::Separator();
@@ -745,11 +745,13 @@ void CommandGui() {
             emscripten_fetch_attr_t attr;
             emscripten_fetch_attr_init(&attr);
             strcpy(attr.requestMethod, "GET");
+            const char * headers[] = {"Content-Type", "application/json", "token", downloads.api_token, 0};
+            attr.requestHeaders = headers;
             attr.attributes = EMSCRIPTEN_FETCH_LOAD_TO_MEMORY;
             attr.onsuccess = downloadBuildtimeSucceeded;
             attr.onerror = downloadFailed;
             attr.onprogress = downloadProgress;
-            emscripten_fetch(&attr, "build_perf_data.json");
+            emscripten_fetch(&attr, "https://stage-collector.foci.life/api/v1/image-stats/experiment/build-perf-karm-1.0.0-runner");
         }
     }
     if (ImGui::IsItemHovered() && downloads.download_in_progress) {
