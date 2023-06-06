@@ -1,11 +1,14 @@
 #include "ImGuiExt.h"
 #include "MarkdownHelper.h"
+#include "emscripten_browser_clipboard.h"
 #include "hello_imgui/hello_imgui.h"
 #include "implot.h"
 #include "implot_internal.h"
 #include <chrono>
 #include <cstdarg>
+#include <emscripten.h>
 #include <emscripten/fetch.h>
+#include <iomanip>
 #include <json.h>
 
 #define MAX_RECORDS_ROW 1024
@@ -18,6 +21,9 @@ struct Downloads {
     bool download_in_progress = false;
     time_t download_timestamp{};
     bool download_error = false;
+    char api_token[129];
+    bool has_api_token = false;
+    bool api_key_popup = true;
 } downloads;
 
 struct BuildTime {
@@ -261,6 +267,7 @@ void plotBuildTime(int row, int col, int attribute_index) {
             } else if (attribute_index == TOTAL_BUILD_TIME_MS_IDX || attribute_index == GC_TOTAL_MS_IDX) {
                 ImPlot::SetupAxisFormat(ImAxis_Y1, SecondsFormatter, (void *) "s");
             }
+
             ImPlot::SetupAxisLinks(ImAxis_X1, &lims.X.Min, &lims.X.Max);
             ImPlot::SetupAxesLimits(-0.5f, lims.X.Max, 0, ymax);
             ImPlot::SetupAxisTicks(ImAxis_X1, buildTimeLabels.positions, (int) buildTimeLabels.elements);
@@ -345,6 +352,10 @@ void BuildTimeContemporary_Plots() {
 
 void BuildTime_Plots() {
     if (buildTimeLabels.elements > 0) {
+        ImGui::BulletText("Fastest build in dataset: %s\nBuild time: %4.2fs", buildTimeLabels.labels[0], (float) buildTime.total_build_time_ms[0] / 1000);
+        ImGui::BulletText("Slowest build in dataset: %s\nBuild time: %4.2fs", buildTimeLabels.labels[buildTimeLabels.elements - 1], (float) buildTime.total_build_time_ms[buildTimeLabels.elements - 1] / 1000);
+        ImU32 gap = buildTime.total_build_time_ms[buildTimeLabels.elements - 1] - buildTime.total_build_time_ms[0];
+        ImGui::BulletText("Gap between fastest and slowest: %4.2fs", (float) gap / 1000);
         static ImGuiTableFlags flags = ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV |
                                        ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_Reorderable;
         if (ImGui::BeginTable("##table 3", 3, flags, ImVec2(-1, 0))) {
@@ -436,7 +447,6 @@ void processBuildtimeJSON(const char *data, int length) {
     const size_t num_attributes = *(&ATTRIBUTE_NAMES + 1) - ATTRIBUTE_NAMES;
 
     // TODO: Full picture - would new builds replace the older ones?
-
 
     for (int i = 0; i < num_attributes; i++) {
         printf("Processing %s\n", ATTRIBUTE_NAMES[i]);
@@ -585,12 +595,7 @@ void processBuildtimeJSON(const char *data, int length) {
             }
         }
     }
-
-
-
     json_tokener_free(tok);
-
-
     buildTimeLabels.elements = array_length;
 }
 
@@ -628,8 +633,106 @@ void downloadFailed(emscripten_fetch_t *fetch) {
     downloads.download_timestamp = NULL;
 }
 
+EM_JS(void, setCookie, (const char *name, const char *value), {
+    var d = new Date();
+    d.setDate(d.getDate() + 365);
+    document.cookie = UTF8ToString(name) + "=" + UTF8ToString(value) + ";SameSite=Strict;expires=" + d.toUTCString() + ";path=/";
+});
+
+EM_JS(char *, getCookie, (const char *name), {
+    var cookies = document.cookie.split(';');
+    var name_ = UTF8ToString(name);
+    for (var i = 0; i < cookies.length; i++) {
+        var cookie = cookies[i].trim();
+        if (cookie.indexOf(name_ + "=") == 0) {
+            var cookieValue = cookie.substring(name_.length + 1, cookie.length);
+            var lengthBytes = lengthBytesUTF8(cookieValue) + 1;
+            var stringOnWasmHeap = _malloc(lengthBytes);
+            stringToUTF8(cookieValue, stringOnWasmHeap, lengthBytes);
+            return stringOnWasmHeap;
+        }
+    }
+    return null;
+});
+
+static std::string clipboard_content;
+char const *get_content_for_imgui(void *user_data [[maybe_unused]]) {
+    //printf("get_content_for_imgui: %s\n", clipboard_content.c_str());
+    return clipboard_content.c_str();
+}
+
+void set_content_from_imgui(void *user_data [[maybe_unused]], char const *text) {
+    clipboard_content = text;
+    //printf("set_content_from_imgui: %s\n", clipboard_content.c_str());
+    emscripten_browser_clipboard::copy(clipboard_content);
+}
+
+void APIKeyModal() {
+    if (downloads.api_key_popup) {
+        ImGui::OpenPopup("API key");
+    }
+    if (ImGui::BeginPopupModal("API key", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        static char *cookieValue;
+        static bool firstTime = true;
+        if (cookieValue == nullptr && firstTime) {
+            cookieValue = getCookie("apikey");
+            if (cookieValue != nullptr) {
+                strncpy(downloads.api_token, cookieValue, min(2, (ImU64) IM_ARRAYSIZE(downloads.api_token), (ImU64) strlen(cookieValue)));
+            }
+            firstTime = false;
+        }
+        // Multiline text input might look better, but the pasted text doesn't wrap, because token is
+        // a single giant word. TODO: Make it wrap nicely.
+        // ImGui::InputTextMultiline("##APIKey", api_token, IM_ARRAYSIZE(api_token), ImVec2(ImGui::GetTextLineHeight() * 16, ImGui::GetTextLineHeight() * 16));
+        ImGui::TextWrapped("Your API key is stored as a SameSite=Strict plaintext cookie.");
+        ImGui::Separator();
+        ImGui::Text("Current API key:");
+        ImGui::Separator();
+        ImGui::TextWrapped("%s", downloads.api_token);
+        ImGui::Separator();
+        ImGui::Text("Insert your API key:");
+        ImGui::Separator();
+        ImGui::PushItemWidth(249);
+        ImGui::InputText("##APIKey", downloads.api_token, IM_ARRAYSIZE(downloads.api_token));
+        ImGui::PopItemWidth();
+        if (ImGui::Button("OK", ImVec2(120, 0))) {
+            setCookie("apikey", downloads.api_token);
+            if (cookieValue != nullptr) {
+                free(cookieValue);
+                cookieValue = nullptr;
+            }
+            ImGui::CloseCurrentPopup();
+            downloads.api_key_popup = false;
+            downloads.has_api_token = strlen(downloads.api_token) > 0;
+        }
+        ImGui::SetItemDefaultFocus();
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+            ImGui::CloseCurrentPopup();
+            downloads.api_key_popup = false;
+        }
+        ImGui::EndPopup();
+    }
+}
+
+inline void LoadAPIKey() {
+    static char *cookieValue;
+    static bool firstTime = true;
+    if (cookieValue == nullptr && firstTime) {
+        cookieValue = getCookie("apikey");
+        if (cookieValue != nullptr && strlen(cookieValue) > 0) {
+            strncpy(downloads.api_token, cookieValue, min(2, (ImU64) IM_ARRAYSIZE(downloads.api_token), (ImU64) strlen(cookieValue)));
+            downloads.api_key_popup = false;
+            downloads.has_api_token = true;
+        }
+        firstTime = false;
+    }
+    APIKeyModal();
+}
+
 //void CommandGui(AppState &state) {
 void CommandGui() {
+    LoadAPIKey();
     HelloImGui::ImageFromAsset("quarkus.png");
     ImGui::SameLine();
     ImGui::TextWrapped("Quarkus Mandrel\nStats, charts, operations");
@@ -637,7 +740,7 @@ void CommandGui() {
         ImGui::SetTooltip("Quarkus Mandrel perf charts demo...");
     }
     ImGui::Separator();
-    if (ImGui::Button("Download buildtime dataset")) {
+    if (ImGui::Button("Download buildtime dataset now")) {
         if (!downloads.download_in_progress) {
             emscripten_fetch_attr_t attr;
             emscripten_fetch_attr_init(&attr);
@@ -679,6 +782,10 @@ void StatusBarGui() {
             ImGui::Text("Downloaded on %s", ctime(&(downloads.download_timestamp)));
         }
     }
+    ImGui::SameLine();
+    ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
+    ImGui::SameLine();
+    ImGui::Text("API token: %s", downloads.has_api_token ? "Set" : "Missing");
     static std::string credit = "Proudly powered by [imgui](https://github.com/ocornut/imgui), "
                                 "[hello_imgui](https://github.com/pthom/hello_imgui) and "
                                 "[implot](https://github.com/epezent/implot).";
@@ -688,15 +795,33 @@ void StatusBarGui() {
 }
 
 int main(int, char **) {
+    // Propagates clipboard data from the browser as there is no native API for it.
+    emscripten_browser_clipboard::paste([](std::string const &paste_data, void *callback_data [[maybe_unused]]) {
+        printf("Paste callback: %s\n", paste_data.c_str());
+        clipboard_content = std::move(paste_data);
+    });
     HelloImGui::RunnerParams runnerParams;
     runnerParams.appWindowParams.windowTitle = "Collector";
     runnerParams.appWindowParams.windowSize = {800, 600};
     runnerParams.imGuiWindowParams.showStatusBar = true;
     runnerParams.callbacks.ShowStatus = StatusBarGui;
     runnerParams.imGuiWindowParams.showMenuBar = true;
+    runnerParams.callbacks.ShowMenus = []() {
+        if (ImGui::BeginMenu("Settings")) {
+            if (ImGui::MenuItem("API Key")) {
+                downloads.api_key_popup = true;
+                APIKeyModal();
+            }
+            ImGui::EndMenu();
+        }
+    };
     runnerParams.callbacks.LoadAdditionalFonts = MarkdownHelper::LoadFonts;
     runnerParams.imGuiWindowParams.defaultImGuiWindowType = HelloImGui::DefaultImGuiWindowType::ProvideFullScreenDockSpace;
-
+    runnerParams.callbacks.PostInit = []() {
+        ImGuiIO &imgui_io = ImGui::GetIO();
+        imgui_io.GetClipboardTextFn = get_content_for_imgui;
+        imgui_io.SetClipboardTextFn = set_content_from_imgui;
+    };
     HelloImGui::DockingSplit splitMainLeft;
     splitMainLeft.initialDock = "MainDockSpace";
     splitMainLeft.newDock = "LeftSpace";
@@ -721,7 +846,9 @@ int main(int, char **) {
     buildTimeContemporaryWindow.dockSpaceName = "MainDockSpace";
     buildTimeContemporaryWindow.GuiFonction = BuildTimeContemporary_Plots;
 
-    runnerParams.dockingParams.dockableWindows = {commandsWindow, buildTimeWindow, buildTimeContemporaryWindow};//, chartsWindow, charts2Window, charts3Window};
+    runnerParams.dockingParams.dockableWindows = {commandsWindow, buildTimeWindow};//, buildTimeContemporaryWindow};//, chartsWindow, charts2Window, charts3Window};
+
+    //runnerParams.fpsIdling TODO: Newer HelloImgui version needed
 
     auto implotContext = ImPlot::CreateContext();
     HelloImGui::Run(runnerParams);
