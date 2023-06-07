@@ -127,20 +127,6 @@ const char *ATTRIBUTE_NAMES[] = {
     "resources_bytes",
     "resources_count"};
 
-inline ImU64 max(const ImU64 n, ...) {
-    va_list p;
-    va_start(p, n);
-    ImU64 max = 0;
-    for (ImU64 i = 0; i < n; i++) {
-        const ImU64 tmp = va_arg(p, ImU64);
-        if (tmp > max) {
-            max = tmp;
-        }
-    }
-    va_end(p);
-    return max;
-}
-
 inline ImU64 min(const ImU64 n, ...) {
     va_list p;
     va_start(p, n);
@@ -430,9 +416,7 @@ void processBuildtimeJSON(const char *data, int length) {
         printf("Error: No created_at array found in the JSON file.\n");
     }
 
-    const size_t array_length = min(2, json_object_array_length(tag_array), MAX_RECORDS_ROW);
-    // If I comment this printf, it crashes :-)
-    printf("array_length: %zu\n", array_length);
+    const ImU64 array_length = min(2, (ImU64)json_object_array_length(tag_array), (ImU64)MAX_RECORDS_ROW);
     for (int j = 0; j < array_length; j++) {
         char *tag_ = const_cast<char *>(json_object_get_string(json_object_array_get_idx(tag_array, j)));
         const char *created_at_ = json_object_get_string(json_object_array_get_idx(created_array, j));
@@ -449,7 +433,7 @@ void processBuildtimeJSON(const char *data, int length) {
     // TODO: Full picture - would new builds replace the older ones?
 
     for (int i = 0; i < num_attributes; i++) {
-        printf("Processing %s\n", ATTRIBUTE_NAMES[i]);
+        //printf("Processing %s\n", ATTRIBUTE_NAMES[i]);
         const char *attribute_name = ATTRIBUTE_NAMES[i];
         const json_object *array = json_object_object_get(root, attribute_name);
         //const size_t array_length = min(2, json_object_array_length(array), MAX_RECORDS_ROW);
@@ -751,7 +735,9 @@ void CommandGui() {
             attr.onsuccess = downloadBuildtimeSucceeded;
             attr.onerror = downloadFailed;
             attr.onprogress = downloadProgress;
+            //emscripten_fetch(&attr, "http://127.0.0.1:8080/api/v1/image-stats/experiment/build-perf-karm-1.0.0-runner");
             emscripten_fetch(&attr, "https://stage-collector.foci.life/api/v1/image-stats/experiment/build-perf-karm-1.0.0-runner");
+            //emscripten_fetch(&attr, "build_perf_data.json");
         }
     }
     if (ImGui::IsItemHovered() && downloads.download_in_progress) {
@@ -761,6 +747,7 @@ void CommandGui() {
         static bool show_legend = false;
         ImGui::Checkbox("List the whole legend", &show_legend);
         if (show_legend) {
+            // TODO: Impacts FPS when there are many records, we should pre-construct the string and cache it.
             for (int i = 0; i < buildTimeLabels.elements; i++) {
                 ImGui::TextWrapped("%d%s - %s", i, (i < 10 ? " " : ""), buildTimeLabels.labels[i]);
             }
@@ -799,7 +786,7 @@ void StatusBarGui() {
 int main(int, char **) {
     // Propagates clipboard data from the browser as there is no native API for it.
     emscripten_browser_clipboard::paste([](std::string const &paste_data, void *callback_data [[maybe_unused]]) {
-        printf("Paste callback: %s\n", paste_data.c_str());
+        //printf("Paste callback: %s\n", paste_data.c_str());
         clipboard_content = std::move(paste_data);
     });
     HelloImGui::RunnerParams runnerParams;

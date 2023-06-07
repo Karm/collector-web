@@ -100,8 +100,6 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_BUILD_TYPE RELEASE)
 set(EMCC_DEBUG 0)
 #Manually copy src dir to web root if needed.
-#set(CMAKE_C_FLAGS_DEBUG -g -O0 -gsource-map --source-map-base http://localhost:7777/)
-#set(CMAKE_CXX_FLAGS_DEBUG -g -O0 -gsource-map --source-map-base http://localhost:7777/)
 add_link_options("SHELL:-gsource-map")
 add_link_options("SHELL:--source-map-base http://localhost:7777/")
 
