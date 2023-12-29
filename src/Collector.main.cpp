@@ -16,6 +16,53 @@
 #define MAX_LABEL_LENGTH 256
 #define MAX_MARGIN(x) (x + x / 3)
 
+#define CLASSES_JNI_IDX 6
+#define CLASSES_REACHABLE_IDX 7
+#define CLASSES_REFLECTION_IDX 8
+#define CLASSES_TOTAL_IDX 9
+#define CODE_AREA_BYTES_IDX 4
+#define FIELDS_JNI_IDX 10
+#define FIELDS_REACHABLE_IDX 11
+#define FIELDS_REFLECTION_IDX 12
+#define FIELDS_TOTAL_IDX 13
+#define GC_TOTAL_MS_IDX 1
+#define IMAGE_HEAP_BYTES_IDX 3
+#define IMAGE_TOTAL_BYTES_IDX 5
+#define METHODS_JNI_IDX 14
+#define METHODS_REACHABLE_IDX 15
+#define METHODS_REFLECTION_IDX 16
+#define METHODS_TOTAL_IDX 17
+#define PEAK_RSS_BYTES_IDX 2
+#define RESOURCES_BYTES_IDX 18
+#define RESOURCES_COUNT_IDX 19
+#define TOTAL_BUILD_TIME_MS_IDX 0
+
+/**
+ * This order dictates the order of the columns and rows in the table.
+ * Mind updating the indices above if you change the order.
+ */
+const char *ATTRIBUTE_NAMES[] = {
+    "total_build_time_ms",
+    "gc_total_ms",
+    "peak_rss_bytes",
+    "image_heap_bytes",
+    "code_area_bytes",
+    "image_total_bytes",
+    "classes_jni",
+    "classes_reachable",
+    "classes_reflection",
+    "classes_total",
+    "fields_jni",
+    "fields_reachable",
+    "fields_reflection",
+    "fields_total",
+    "methods_jni",
+    "methods_reachable",
+    "methods_reflection",
+    "methods_total",
+    "resources_bytes",
+    "resources_count"};
+
 struct Downloads {
     float download_progress_bar = 0.f;
     bool download_in_progress = false;
@@ -73,59 +120,13 @@ struct BuildTimeLabels {
     char labels[MAX_RECORDS_ROW][MAX_LABEL_LENGTH]{};
     double positions[MAX_RECORDS_ROW]{};
     ImU32 elements = 0;
+    ImU32 sorted_by = TOTAL_BUILD_TIME_MS_IDX;
 } buildTimeLabels, buildTimeLabelsContemporary[MAX_LINES_CHART];
 
 struct BuildTimeContemporaryLines {
     ImU32 elements = 0;
     char labels[MAX_RECORDS_ROW][MAX_LABEL_LENGTH]{};
 } buildTimeContemporaryLines;
-
-#define CLASSES_JNI_IDX 6
-#define CLASSES_REACHABLE_IDX 7
-#define CLASSES_REFLECTION_IDX 8
-#define CLASSES_TOTAL_IDX 9
-#define CODE_AREA_BYTES_IDX 4
-#define FIELDS_JNI_IDX 10
-#define FIELDS_REACHABLE_IDX 11
-#define FIELDS_REFLECTION_IDX 12
-#define FIELDS_TOTAL_IDX 13
-#define GC_TOTAL_MS_IDX 1
-#define IMAGE_HEAP_BYTES_IDX 3
-#define IMAGE_TOTAL_BYTES_IDX 5
-#define METHODS_JNI_IDX 14
-#define METHODS_REACHABLE_IDX 15
-#define METHODS_REFLECTION_IDX 16
-#define METHODS_TOTAL_IDX 17
-#define PEAK_RSS_BYTES_IDX 2
-#define RESOURCES_BYTES_IDX 18
-#define RESOURCES_COUNT_IDX 19
-#define TOTAL_BUILD_TIME_MS_IDX 0
-
-/**
- * This order dictates the order of the columns and rows in the table.
- * Mind updating the indices above if you change the order.
- */
-const char *ATTRIBUTE_NAMES[] = {
-    "total_build_time_ms",
-    "gc_total_ms",
-    "peak_rss_bytes",
-    "image_heap_bytes",
-    "code_area_bytes",
-    "image_total_bytes",
-    "classes_jni",
-    "classes_reachable",
-    "classes_reflection",
-    "classes_total",
-    "fields_jni",
-    "fields_reachable",
-    "fields_reflection",
-    "fields_total",
-    "methods_jni",
-    "methods_reachable",
-    "methods_reflection",
-    "methods_total",
-    "resources_bytes",
-    "resources_count"};
 
 inline ImU64 min(const ImU64 n, ...) {
     va_list p;
@@ -170,6 +171,146 @@ int BytesFormatter(double value, char *buff, int size, void *data) {
         }
     }
     return snprintf(buff, size, "%4.2f %s%s", value / v[3], p[3], unit);
+}
+
+void swap_uint64(ImU64 *a, ImU64 *b) {
+    ImU64 temp = *a;
+    *a = *b;
+    *b = temp;
+}
+
+int partition(ImU64 arr[], int low, int high, int selected_array, ImU64 *other_arrays[]) {
+    const ImU64 pivot = arr[high];
+    int i = low - 1;
+    for (int j = low; j <= high - 1; j++) {
+        if (arr[j] < pivot) {
+            i++;
+            swap_uint64(&arr[i], &arr[j]);
+            // Swap corresponding elements in other arrays
+            for (int k = 0; k < 20; k++) {
+                if (k != selected_array) {
+                    swap_uint64(&other_arrays[k][i], &other_arrays[k][j]);
+                }
+            }
+        }
+    }
+    swap_uint64(&arr[i + 1], &arr[high]);
+    // Swap corresponding elements in other arrays
+    for (int k = 0; k < 20; k++) {
+        if (k != selected_array) {
+            swap_uint64(&other_arrays[k][i + 1], &other_arrays[k][high]);
+        }
+    }
+    return (i + 1);
+}
+
+void qsort(ImU64 arr[], int low, int high, int selected_array, ImU64 *other_arrays[]) {
+    if (low < high) {
+        int pi = partition(arr, low, high, selected_array, other_arrays);
+        qsort(arr, low, pi - 1, selected_array, other_arrays);
+        qsort(arr, pi + 1, high, selected_array, other_arrays);
+    }
+}
+
+void sort_and_shuffle(int selected_array) {
+    if (selected_array < 0 || selected_array >= 20) {
+        printf("Invalid selected_array index.\n");
+        return;
+    }
+
+    printf("Sorting by %s\n", ATTRIBUTE_NAMES[selected_array]);
+
+    ImU64 *selected;
+    // Todo: Do this to simplify other parts.
+    ImU64 *other_arrays[] = {
+        buildTime.total_build_time_ms,
+        buildTime.gc_total_ms,
+        buildTime.peak_rss_bytes,
+        buildTime.image_heap_bytes,
+        buildTime.code_area_bytes,
+        buildTime.image_total_bytes,
+        buildTime.classes_jni,
+        buildTime.classes_reachable,
+        buildTime.classes_reflection,
+        buildTime.classes_total,
+        buildTime.fields_jni,
+        buildTime.fields_reachable,
+        buildTime.fields_reflection,
+        buildTime.fields_total,
+        buildTime.methods_jni,
+        buildTime.methods_reachable,
+        buildTime.methods_reflection,
+        buildTime.methods_total,
+        buildTime.resources_bytes,
+        buildTime.resources_count};
+
+    switch (selected_array) {
+        case CLASSES_JNI_IDX:
+            selected = buildTime.classes_jni;
+            break;
+        case FIELDS_JNI_IDX:
+            selected = buildTime.fields_jni;
+            break;
+        case METHODS_JNI_IDX:
+            selected = buildTime.methods_jni;
+            break;
+        case CLASSES_REFLECTION_IDX:
+            selected = buildTime.classes_reflection;
+            break;
+        case FIELDS_REFLECTION_IDX:
+            selected = buildTime.fields_reflection;
+            break;
+        case RESOURCES_COUNT_IDX:
+            selected = buildTime.resources_count;
+            break;
+        case RESOURCES_BYTES_IDX:
+            selected = buildTime.resources_bytes;
+            break;
+        case CLASSES_REACHABLE_IDX:
+            selected = buildTime.classes_reachable;
+            break;
+        case CLASSES_TOTAL_IDX:
+            selected = buildTime.classes_total;
+            break;
+        case FIELDS_REACHABLE_IDX:
+            selected = buildTime.fields_reachable;
+            break;
+        case FIELDS_TOTAL_IDX:
+            selected = buildTime.fields_total;
+            break;
+        case METHODS_REACHABLE_IDX:
+            selected = buildTime.methods_reachable;
+            break;
+        case METHODS_TOTAL_IDX:
+            selected = buildTime.methods_total;
+            break;
+        case METHODS_REFLECTION_IDX:
+            selected = buildTime.methods_reflection;
+            break;
+        case TOTAL_BUILD_TIME_MS_IDX:
+            selected = buildTime.total_build_time_ms;
+            break;
+        case GC_TOTAL_MS_IDX:
+            selected = buildTime.gc_total_ms;
+            break;
+        case PEAK_RSS_BYTES_IDX:
+            selected = buildTime.peak_rss_bytes;
+            break;
+        case IMAGE_HEAP_BYTES_IDX:
+            selected = buildTime.image_heap_bytes;
+            break;
+        case IMAGE_TOTAL_BYTES_IDX:
+            selected = buildTime.image_total_bytes;
+            break;
+        case CODE_AREA_BYTES_IDX:
+            selected = buildTime.code_area_bytes;
+            break;
+        default:
+            printf("Invalid selected_array index.\n");
+            return;
+    }
+
+    qsort(selected, 0, buildTimeLabels.elements - 1, selected_array, other_arrays);
 }
 
 void plotBuildTime(int row, int col, int attribute_index) {
@@ -244,7 +385,7 @@ void plotBuildTime(int row, int col, int attribute_index) {
     }
     static ImPlotRect lims(0, 12, 0, 1);
     if (ImPlot::BeginAlignedPlots("AlignedGroup", true)) {
-        if (ImPlot::BeginPlot(title)) {
+        if (ImPlot::BeginPlot(title, ImVec2(-1, 0), ImPlotFlags_NoCentralMenu)) {
             ImPlot::SetupAxes("Builder images", "##y-axis");
             if (attribute_index == CODE_AREA_BYTES_IDX || attribute_index == IMAGE_HEAP_BYTES_IDX ||
                 attribute_index == IMAGE_TOTAL_BYTES_IDX || attribute_index == PEAK_RSS_BYTES_IDX ||
@@ -257,7 +398,11 @@ void plotBuildTime(int row, int col, int attribute_index) {
             ImPlot::SetupAxisLinks(ImAxis_X1, &lims.X.Min, &lims.X.Max);
             ImPlot::SetupAxesLimits(-0.5f, lims.X.Max, 0, ymax);
             ImPlot::SetupAxisTicks(ImAxis_X1, buildTimeLabels.positions, (int) buildTimeLabels.elements);
-            ImPlot::SetNextLineStyle(quarkus_magenta_color, 1);
+            if (attribute_index != buildTimeLabels.sorted_by) {
+                ImPlot::SetNextLineStyle(quarkus_magenta_color, 1);
+            } else {
+                ImPlot::SetNextLineStyle(quarkus_blue_color, 1);
+            }
             ImPlot::PlotLine(y_label, values, (int) buildTimeLabels.elements);
             ImDrawList *draw_list = ImPlot::GetPlotDrawList();
             if (ImPlot::IsPlotHovered()) {
@@ -284,6 +429,13 @@ void plotBuildTime(int row, int col, int attribute_index) {
                     ImGui::Text("%s", buildTimeLabels.labels[round_mouse_x]);
                     ImGui::EndTooltip();
                 }
+            }
+            if (ImPlot::BeginCustomContext()) {
+                if (ImGui::MenuItem("Sort by ", y_label)) {
+                    buildTimeLabels.sorted_by = attribute_index;
+                    sort_and_shuffle(attribute_index);
+                }
+                ImPlot::EndCustomContext(true);// true = append standard menu
             }
             ImPlot::EndPlot();
         }
@@ -579,6 +731,7 @@ void processBuildtimeJSON(const char *data, int length) {
             }
         }
     }
+    sort_and_shuffle(TOTAL_BUILD_TIME_MS_IDX);
     json_tokener_free(tok);
     buildTimeLabels.elements = array_length;
 }
@@ -729,7 +882,7 @@ void CommandGui() {
             emscripten_fetch_attr_t attr;
             emscripten_fetch_attr_init(&attr);
             strcpy(attr.requestMethod, "GET");
-            const char * headers[] = {"Content-Type", "application/json", "token", downloads.api_token, 0};
+            const char *headers[] = {"Content-Type", "application/json", "token", downloads.api_token, 0};
             attr.requestHeaders = headers;
             attr.attributes = EMSCRIPTEN_FETCH_LOAD_TO_MEMORY;
             attr.onsuccess = downloadBuildtimeSucceeded;
