@@ -16,29 +16,53 @@
 #define MAX_LABEL_LENGTH 256
 #define MAX_MARGIN(x) (x + x / 3)
 
+struct BuildTime {
+    ImU64 classes_jni[MAX_RECORDS_ROW];
+    ImU64 fields_jni[MAX_RECORDS_ROW];
+    ImU64 methods_jni[MAX_RECORDS_ROW];
+    ImU64 classes_reflection[MAX_RECORDS_ROW];
+    ImU64 fields_reflection[MAX_RECORDS_ROW];
+    ImU64 resources_count[MAX_RECORDS_ROW];
+    ImU64 resources_bytes[MAX_RECORDS_ROW];
+    ImU64 classes_reachable[MAX_RECORDS_ROW];
+    ImU64 classes_total[MAX_RECORDS_ROW];
+    ImU64 fields_reachable[MAX_RECORDS_ROW];
+    ImU64 fields_total[MAX_RECORDS_ROW];
+    ImU64 methods_reachable[MAX_RECORDS_ROW];
+    ImU64 methods_total[MAX_RECORDS_ROW];
+    ImU64 methods_reflection[MAX_RECORDS_ROW];
+    ImU64 total_build_time_ms[MAX_RECORDS_ROW];
+    ImU64 gc_total_ms[MAX_RECORDS_ROW];
+    ImU64 peak_rss_bytes[MAX_RECORDS_ROW];
+    ImU64 image_heap_bytes[MAX_RECORDS_ROW];
+    ImU64 image_total_bytes[MAX_RECORDS_ROW];
+    ImU64 code_area_bytes[MAX_RECORDS_ROW];
+} buildTime, buildTimeContemporary[MAX_LINES_CHART];
+
+#define BUILD_TIME_METRICS 20
 /**
  * We have 20 metrics in total for build time
  */
+#define TOTAL_BUILD_TIME_MS_IDX 0
+#define GC_TOTAL_MS_IDX 1
+#define PEAK_RSS_BYTES_IDX 2
+#define IMAGE_HEAP_BYTES_IDX 3
+#define CODE_AREA_BYTES_IDX 4
+#define IMAGE_TOTAL_BYTES_IDX 5
 #define CLASSES_JNI_IDX 6
 #define CLASSES_REACHABLE_IDX 7
 #define CLASSES_REFLECTION_IDX 8
 #define CLASSES_TOTAL_IDX 9
-#define CODE_AREA_BYTES_IDX 4
 #define FIELDS_JNI_IDX 10
 #define FIELDS_REACHABLE_IDX 11
 #define FIELDS_REFLECTION_IDX 12
 #define FIELDS_TOTAL_IDX 13
-#define GC_TOTAL_MS_IDX 1
-#define IMAGE_HEAP_BYTES_IDX 3
-#define IMAGE_TOTAL_BYTES_IDX 5
 #define METHODS_JNI_IDX 14
 #define METHODS_REACHABLE_IDX 15
 #define METHODS_REFLECTION_IDX 16
 #define METHODS_TOTAL_IDX 17
-#define PEAK_RSS_BYTES_IDX 2
 #define RESOURCES_BYTES_IDX 18
 #define RESOURCES_COUNT_IDX 19
-#define TOTAL_BUILD_TIME_MS_IDX 0
 
 /**
  * This order dictates the order of the columns and rows in the table.
@@ -66,6 +90,31 @@ const char *ATTRIBUTE_NAMES[] = {
     "resources_bytes",
     "resources_count"};
 
+/**
+ * Order matters, as in ATTRIBUTE_NAMES
+ */
+ImU64 *DATA_ARRAYS[] = {
+    buildTime.total_build_time_ms,
+    buildTime.gc_total_ms,
+    buildTime.peak_rss_bytes,
+    buildTime.image_heap_bytes,
+    buildTime.code_area_bytes,
+    buildTime.image_total_bytes,
+    buildTime.classes_jni,
+    buildTime.classes_reachable,
+    buildTime.classes_reflection,
+    buildTime.classes_total,
+    buildTime.fields_jni,
+    buildTime.fields_reachable,
+    buildTime.fields_reflection,
+    buildTime.fields_total,
+    buildTime.methods_jni,
+    buildTime.methods_reachable,
+    buildTime.methods_reflection,
+    buildTime.methods_total,
+    buildTime.resources_bytes,
+    buildTime.resources_count};
+
 struct Downloads {
     float download_progress_bar = 0.f;
     bool download_in_progress = false;
@@ -75,29 +124,6 @@ struct Downloads {
     bool has_api_token = false;
     bool api_key_popup = true;
 } downloads;
-
-struct BuildTime {
-    ImU64 classes_jni[MAX_RECORDS_ROW];
-    ImU64 fields_jni[MAX_RECORDS_ROW];
-    ImU64 methods_jni[MAX_RECORDS_ROW];
-    ImU64 classes_reflection[MAX_RECORDS_ROW];
-    ImU64 fields_reflection[MAX_RECORDS_ROW];
-    ImU64 resources_count[MAX_RECORDS_ROW];
-    ImU64 resources_bytes[MAX_RECORDS_ROW];
-    ImU64 classes_reachable[MAX_RECORDS_ROW];
-    ImU64 classes_total[MAX_RECORDS_ROW];
-    ImU64 fields_reachable[MAX_RECORDS_ROW];
-    ImU64 fields_total[MAX_RECORDS_ROW];
-    ImU64 methods_reachable[MAX_RECORDS_ROW];
-    ImU64 methods_total[MAX_RECORDS_ROW];
-    ImU64 methods_reflection[MAX_RECORDS_ROW];
-    ImU64 total_build_time_ms[MAX_RECORDS_ROW];
-    ImU64 gc_total_ms[MAX_RECORDS_ROW];
-    ImU64 peak_rss_bytes[MAX_RECORDS_ROW];
-    ImU64 image_heap_bytes[MAX_RECORDS_ROW];
-    ImU64 image_total_bytes[MAX_RECORDS_ROW];
-    ImU64 code_area_bytes[MAX_RECORDS_ROW];
-} buildTime, buildTimeContemporary[MAX_LINES_CHART];
 
 struct BuildTimeLabels {
     ImU64 max_classes_jni = 0;
@@ -197,7 +223,7 @@ int partition(ImU64 arr[], int low, int high, int selected_array, ImU64 *other_a
             i++;
             swap_uint64(&arr[i], &arr[j]);
             // Swap corresponding elements in other arrays
-            for (int k = 0; k < 20; k++) {
+            for (int k = 0; k < BUILD_TIME_METRICS; k++) {
                 if (k != selected_array) {
                     swap_uint64(&other_arrays[k][i], &other_arrays[k][j]);
                 }
@@ -207,7 +233,7 @@ int partition(ImU64 arr[], int low, int high, int selected_array, ImU64 *other_a
     }
     swap_uint64(&arr[i + 1], &arr[high]);
     // Swap corresponding elements in other arrays
-    for (int k = 0; k < 20; k++) {
+    for (int k = 0; k < BUILD_TIME_METRICS; k++) {
         if (k != selected_array) {
             swap_uint64(&other_arrays[k][i + 1], &other_arrays[k][high]);
         }
@@ -216,46 +242,23 @@ int partition(ImU64 arr[], int low, int high, int selected_array, ImU64 *other_a
     return (i + 1);
 }
 
-void qsort(ImU64 arr[], int low, int high, int selected_array, ImU64 *other_arrays[]) {
+void qsort_shuffle(ImU64 arr[], int low, int high, int selected_array, ImU64 *other_arrays[]) {
     if (low < high) {
         const int pi = partition(arr, low, high, selected_array, other_arrays);
-        qsort(arr, low, pi - 1, selected_array, other_arrays);
-        qsort(arr, pi + 1, high, selected_array, other_arrays);
+        qsort_shuffle(arr, low, pi - 1, selected_array, other_arrays);
+        qsort_shuffle(arr, pi + 1, high, selected_array, other_arrays);
     }
 }
 
 void sort_and_shuffle(int selected_array) {
-    if (selected_array < 0 || selected_array >= 20) {
+    if (selected_array < 0 || selected_array >= BUILD_TIME_METRICS) {
         printf("Invalid selected_array index.\n");
         return;
     }
 
-    printf("Sorting by %s\n", ATTRIBUTE_NAMES[selected_array]);
+    //printf("Sorting by %s\n", ATTRIBUTE_NAMES[selected_array]);
 
     ImU64 *selected;
-    // Todo: Do this to simplify other parts.
-    ImU64 *other_arrays[] = {
-        buildTime.total_build_time_ms,
-        buildTime.gc_total_ms,
-        buildTime.peak_rss_bytes,
-        buildTime.image_heap_bytes,
-        buildTime.code_area_bytes,
-        buildTime.image_total_bytes,
-        buildTime.classes_jni,
-        buildTime.classes_reachable,
-        buildTime.classes_reflection,
-        buildTime.classes_total,
-        buildTime.fields_jni,
-        buildTime.fields_reachable,
-        buildTime.fields_reflection,
-        buildTime.fields_total,
-        buildTime.methods_jni,
-        buildTime.methods_reachable,
-        buildTime.methods_reflection,
-        buildTime.methods_total,
-        buildTime.resources_bytes,
-        buildTime.resources_count};
-
     switch (selected_array) {
         case CLASSES_JNI_IDX:
             selected = buildTime.classes_jni;
@@ -322,7 +325,7 @@ void sort_and_shuffle(int selected_array) {
             return;
     }
 
-    qsort(selected, 0, buildTimeLabels.elements - 1, selected_array, other_arrays);
+    qsort_shuffle(selected, 0, buildTimeLabels.elements - 1, selected_array, DATA_ARRAYS);
 }
 
 void plotBuildTime(int row, int col, int attribute_index) {
@@ -502,50 +505,25 @@ void BuildTimeContemporary_Plots() {
 
 void BuildTime_Plots() {
     if (buildTimeLabels.elements > 0) {
-
-        ImU64 *other_arrays[] = {
-            buildTime.total_build_time_ms,
-            buildTime.gc_total_ms,
-            buildTime.peak_rss_bytes,
-            buildTime.image_heap_bytes,
-            buildTime.code_area_bytes,
-            buildTime.image_total_bytes,
-            buildTime.classes_jni,
-            buildTime.classes_reachable,
-            buildTime.classes_reflection,
-            buildTime.classes_total,
-            buildTime.fields_jni,
-            buildTime.fields_reachable,
-            buildTime.fields_reflection,
-            buildTime.fields_total,
-            buildTime.methods_jni,
-            buildTime.methods_reachable,
-            buildTime.methods_reflection,
-            buildTime.methods_total,
-            buildTime.resources_bytes,
-            buildTime.resources_count};
-
         char first[IMPLOT_LABEL_MAX_SIZE];
         char last[IMPLOT_LABEL_MAX_SIZE];
         char gap[IMPLOT_LABEL_MAX_SIZE];
-        const ImU64 gap_value = other_arrays[buildTimeLabels.sorted_by][buildTimeLabels.elements - 1] - other_arrays[buildTimeLabels.sorted_by][0];
-
+        const ImU64 gap_value = DATA_ARRAYS[buildTimeLabels.sorted_by][buildTimeLabels.elements - 1] - DATA_ARRAYS[buildTimeLabels.sorted_by][0];
         if (buildTimeLabels.sorted_by == CODE_AREA_BYTES_IDX || buildTimeLabels.sorted_by == IMAGE_HEAP_BYTES_IDX ||
             buildTimeLabels.sorted_by == IMAGE_TOTAL_BYTES_IDX || buildTimeLabels.sorted_by == PEAK_RSS_BYTES_IDX ||
             buildTimeLabels.sorted_by == RESOURCES_BYTES_IDX) {
-            BytesFormatter(other_arrays[buildTimeLabels.sorted_by][0], first, sizeof(first), (void *) "B");
-            BytesFormatter(other_arrays[buildTimeLabels.sorted_by][buildTimeLabels.elements - 1], last, sizeof(last), (void *) "B");
+            BytesFormatter(DATA_ARRAYS[buildTimeLabels.sorted_by][0], first, sizeof(first), (void *) "B");
+            BytesFormatter(DATA_ARRAYS[buildTimeLabels.sorted_by][buildTimeLabels.elements - 1], last, sizeof(last), (void *) "B");
             BytesFormatter(gap_value, gap, sizeof(gap), (void *) "B");
         } else if (buildTimeLabels.sorted_by == TOTAL_BUILD_TIME_MS_IDX || buildTimeLabels.sorted_by == GC_TOTAL_MS_IDX) {
-            SecondsFormatter(other_arrays[buildTimeLabels.sorted_by][0], first, sizeof(first), (void *) "s");
-            SecondsFormatter(other_arrays[buildTimeLabels.sorted_by][buildTimeLabels.elements - 1], last, sizeof(last), (void *) "s");
+            SecondsFormatter(DATA_ARRAYS[buildTimeLabels.sorted_by][0], first, sizeof(first), (void *) "s");
+            SecondsFormatter(DATA_ARRAYS[buildTimeLabels.sorted_by][buildTimeLabels.elements - 1], last, sizeof(last), (void *) "s");
             SecondsFormatter(gap_value, gap, sizeof(gap), (void *) "s");
         } else {
-            snprintf(first, sizeof(first), "%4.2llu", other_arrays[buildTimeLabels.sorted_by][0]);
-            snprintf(last, sizeof(last), "%4.2llu", other_arrays[buildTimeLabels.sorted_by][buildTimeLabels.elements - 1]);
+            snprintf(first, sizeof(first), "%4.2llu", DATA_ARRAYS[buildTimeLabels.sorted_by][0]);
+            snprintf(last, sizeof(last), "%4.2llu", DATA_ARRAYS[buildTimeLabels.sorted_by][buildTimeLabels.elements - 1]);
             snprintf(gap, sizeof(gap), "%4.2llu", gap_value);
         }
-
         ImGui::Text("Dataset sorted by: %s", ATTRIBUTE_NAMES[buildTimeLabels.sorted_by]);
         ImGui::BulletText("First in dataset: %s\nValue: %s", buildTimeLabels.labels[0], first);
         ImGui::BulletText("Last in dataset: %s\nValue: %s", buildTimeLabels.labels[buildTimeLabels.elements - 1], last);
