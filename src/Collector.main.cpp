@@ -16,6 +16,9 @@
 #define MAX_LABEL_LENGTH 256
 #define MAX_MARGIN(x) (x + x / 3)
 
+/**
+ * We have 20 metrics in total for build time
+ */
 #define CLASSES_JNI_IDX 6
 #define CLASSES_REACHABLE_IDX 7
 #define CLASSES_REFLECTION_IDX 8
@@ -179,6 +182,13 @@ void swap_uint64(ImU64 *a, ImU64 *b) {
     *b = temp;
 }
 
+void swap_str(char *a, char *b) {
+    char temp[MAX_LABEL_LENGTH];
+    strncpy(temp, a, MAX_LABEL_LENGTH);
+    strncpy(a, b, MAX_LABEL_LENGTH);
+    strncpy(b, temp, MAX_LABEL_LENGTH);
+}
+
 int partition(ImU64 arr[], int low, int high, int selected_array, ImU64 *other_arrays[]) {
     const ImU64 pivot = arr[high];
     int i = low - 1;
@@ -192,6 +202,7 @@ int partition(ImU64 arr[], int low, int high, int selected_array, ImU64 *other_a
                     swap_uint64(&other_arrays[k][i], &other_arrays[k][j]);
                 }
             }
+            swap_str(buildTimeLabels.labels[i], buildTimeLabels.labels[j]);
         }
     }
     swap_uint64(&arr[i + 1], &arr[high]);
@@ -201,12 +212,13 @@ int partition(ImU64 arr[], int low, int high, int selected_array, ImU64 *other_a
             swap_uint64(&other_arrays[k][i + 1], &other_arrays[k][high]);
         }
     }
+    swap_str(buildTimeLabels.labels[i + 1], buildTimeLabels.labels[high]);
     return (i + 1);
 }
 
 void qsort(ImU64 arr[], int low, int high, int selected_array, ImU64 *other_arrays[]) {
     if (low < high) {
-        int pi = partition(arr, low, high, selected_array, other_arrays);
+        const int pi = partition(arr, low, high, selected_array, other_arrays);
         qsort(arr, low, pi - 1, selected_array, other_arrays);
         qsort(arr, pi + 1, high, selected_array, other_arrays);
     }
@@ -314,8 +326,6 @@ void sort_and_shuffle(int selected_array) {
 }
 
 void plotBuildTime(int row, int col, int attribute_index) {
-    static char title[17] = {};
-    sprintf(title, "## row %d col %d", row, col);
     ImU64 *values;
     double ymax;
     const char *y_label = ATTRIBUTE_NAMES[attribute_index];
@@ -383,6 +393,8 @@ void plotBuildTime(int row, int col, int attribute_index) {
         //TODO: Error, inform user...
         printf("Error, index unknown.\n");
     }
+    static char title[17] = {};
+    sprintf(title, "## row %d col %d", row, col);
     static ImPlotRect lims(0, 12, 0, 1);
     if (ImPlot::BeginAlignedPlots("AlignedGroup", true)) {
         if (ImPlot::BeginPlot(title, ImVec2(-1, 0), ImPlotFlags_NoCentralMenu)) {
@@ -490,10 +502,55 @@ void BuildTimeContemporary_Plots() {
 
 void BuildTime_Plots() {
     if (buildTimeLabels.elements > 0) {
-        ImGui::BulletText("Fastest build in dataset: %s\nBuild time: %4.2fs", buildTimeLabels.labels[0], (float) buildTime.total_build_time_ms[0] / 1000);
-        ImGui::BulletText("Slowest build in dataset: %s\nBuild time: %4.2fs", buildTimeLabels.labels[buildTimeLabels.elements - 1], (float) buildTime.total_build_time_ms[buildTimeLabels.elements - 1] / 1000);
-        ImU32 gap = buildTime.total_build_time_ms[buildTimeLabels.elements - 1] - buildTime.total_build_time_ms[0];
-        ImGui::BulletText("Gap between fastest and slowest: %4.2fs", (float) gap / 1000);
+
+        ImU64 *other_arrays[] = {
+            buildTime.total_build_time_ms,
+            buildTime.gc_total_ms,
+            buildTime.peak_rss_bytes,
+            buildTime.image_heap_bytes,
+            buildTime.code_area_bytes,
+            buildTime.image_total_bytes,
+            buildTime.classes_jni,
+            buildTime.classes_reachable,
+            buildTime.classes_reflection,
+            buildTime.classes_total,
+            buildTime.fields_jni,
+            buildTime.fields_reachable,
+            buildTime.fields_reflection,
+            buildTime.fields_total,
+            buildTime.methods_jni,
+            buildTime.methods_reachable,
+            buildTime.methods_reflection,
+            buildTime.methods_total,
+            buildTime.resources_bytes,
+            buildTime.resources_count};
+
+        char first[IMPLOT_LABEL_MAX_SIZE];
+        char last[IMPLOT_LABEL_MAX_SIZE];
+        char gap[IMPLOT_LABEL_MAX_SIZE];
+        const ImU64 gap_value = other_arrays[buildTimeLabels.sorted_by][buildTimeLabels.elements - 1] - other_arrays[buildTimeLabels.sorted_by][0];
+
+        if (buildTimeLabels.sorted_by == CODE_AREA_BYTES_IDX || buildTimeLabels.sorted_by == IMAGE_HEAP_BYTES_IDX ||
+            buildTimeLabels.sorted_by == IMAGE_TOTAL_BYTES_IDX || buildTimeLabels.sorted_by == PEAK_RSS_BYTES_IDX ||
+            buildTimeLabels.sorted_by == RESOURCES_BYTES_IDX) {
+            BytesFormatter(other_arrays[buildTimeLabels.sorted_by][0], first, sizeof(first), (void *) "B");
+            BytesFormatter(other_arrays[buildTimeLabels.sorted_by][buildTimeLabels.elements - 1], last, sizeof(last), (void *) "B");
+            BytesFormatter(gap_value, gap, sizeof(gap), (void *) "B");
+        } else if (buildTimeLabels.sorted_by == TOTAL_BUILD_TIME_MS_IDX || buildTimeLabels.sorted_by == GC_TOTAL_MS_IDX) {
+            SecondsFormatter(other_arrays[buildTimeLabels.sorted_by][0], first, sizeof(first), (void *) "s");
+            SecondsFormatter(other_arrays[buildTimeLabels.sorted_by][buildTimeLabels.elements - 1], last, sizeof(last), (void *) "s");
+            SecondsFormatter(gap_value, gap, sizeof(gap), (void *) "s");
+        } else {
+            snprintf(first, sizeof(first), "%4.2llu", other_arrays[buildTimeLabels.sorted_by][0]);
+            snprintf(last, sizeof(last), "%4.2llu", other_arrays[buildTimeLabels.sorted_by][buildTimeLabels.elements - 1]);
+            snprintf(gap, sizeof(gap), "%4.2llu", gap_value);
+        }
+
+        ImGui::Text("Dataset sorted by: %s", ATTRIBUTE_NAMES[buildTimeLabels.sorted_by]);
+        ImGui::BulletText("First in dataset: %s\nValue: %s", buildTimeLabels.labels[0], first);
+        ImGui::BulletText("Last in dataset: %s\nValue: %s", buildTimeLabels.labels[buildTimeLabels.elements - 1], last);
+        ImGui::BulletText("Gap between the first and the last: %s", gap);
+
         static ImGuiTableFlags flags = ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV |
                                        ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_Reorderable;
         if (ImGui::BeginTable("##table 3", 3, flags, ImVec2(-1, 0))) {
@@ -568,7 +625,7 @@ void processBuildtimeJSON(const char *data, int length) {
         printf("Error: No created_at array found in the JSON file.\n");
     }
 
-    const ImU64 array_length = min(2, (ImU64)json_object_array_length(tag_array), (ImU64)MAX_RECORDS_ROW);
+    const ImU64 array_length = min(2, (ImU64) json_object_array_length(tag_array), (ImU64) MAX_RECORDS_ROW);
     for (int j = 0; j < array_length; j++) {
         char *tag_ = const_cast<char *>(json_object_get_string(json_object_array_get_idx(tag_array, j)));
         const char *created_at_ = json_object_get_string(json_object_array_get_idx(created_array, j));
