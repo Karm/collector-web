@@ -256,6 +256,8 @@ void sort_and_shuffle(int selected_array) {
         return;
     }
 
+    buildTimeLabels.sorted_by = selected_array;
+
     //printf("Sorting by %s\n", ATTRIBUTE_NAMES[selected_array]);
 
     ImU64 *selected;
@@ -447,7 +449,6 @@ void plotBuildTime(int row, int col, int attribute_index) {
             }
             if (ImPlot::BeginCustomContext()) {
                 if (ImGui::MenuItem("Sort by ", y_label)) {
-                    buildTimeLabels.sorted_by = attribute_index;
                     sort_and_shuffle(attribute_index);
                 }
                 ImPlot::EndCustomContext(true);// true = append standard menu
