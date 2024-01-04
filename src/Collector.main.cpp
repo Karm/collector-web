@@ -16,6 +16,9 @@
 #define MAX_LABEL_LENGTH 256
 #define MAX_MARGIN(x) (x + x / 3)
 
+// Visual, chart labeling tooltip
+#define TOOLTIP_REGION 0.12
+
 struct BuildTime {
     ImU64 classes_jni[MAX_RECORDS_ROW];
     ImU64 fields_jni[MAX_RECORDS_ROW];
@@ -175,10 +178,6 @@ static ImVec4 quarkus_red_color = ImColor(IM_COL32(255, 0, 74, 255)).Value;
 static ImVec4 quarkus_blue_color = ImColor(IM_COL32(70, 149, 235, 255)).Value;
 static ImVec4 quarkus_magenta_color = ImColor(IM_COL32(205, 84, 225, 255)).Value;
 
-inline bool cursorWithinXRegion(double mouse_x) {
-    return mouse_x - (int) mouse_x < 0.1 || mouse_x - (int) mouse_x > 0.9;
-}
-
 int SecondsFormatter(double value, char *buff, int size, void *data) {
     const char *unit = (const char *) data;
     if (value == 0) {
@@ -330,6 +329,10 @@ void sort_and_shuffle(int selected_array) {
     qsort_shuffle(selected, 0, buildTimeLabels.elements - 1, selected_array, DATA_ARRAYS);
 }
 
+inline bool cursorWithinXRegion(double mouse_x) {
+    return abs(mouse_x - (int) round(mouse_x)) < TOOLTIP_REGION;
+}
+
 void plotBuildTime(int row, int col, int attribute_index) {
     ImU64 *values;
     double ymax;
@@ -420,33 +423,36 @@ void plotBuildTime(int row, int col, int attribute_index) {
             } else {
                 ImPlot::SetNextLineStyle(quarkus_blue_color, 1);
             }
+            // Drawing the actual line chart
             ImPlot::PlotLine(y_label, values, (int) buildTimeLabels.elements);
+
+            // Rectangle marking a point on x axes for all charts
+            static int round_mouse_x_all = 0;
+            ImPlot::PushPlotClipRect();
+            const float label_rect_left = ImPlot::PlotToPixels(round_mouse_x_all - TOOLTIP_REGION, 0).x;
+            const float label_rect_right = ImPlot::PlotToPixels(round_mouse_x_all + TOOLTIP_REGION, 0).x;
+            const float label_rect_top = ImPlot::GetPlotPos().y;
+            const float label_rect_bottom = label_rect_top + ImPlot::GetPlotSize().y;
             ImDrawList *draw_list = ImPlot::GetPlotDrawList();
-            if (ImPlot::IsPlotHovered()) {
-                ImPlotPoint mouse = ImPlot::GetPlotMousePos();
-                const float label_rect_left = ImPlot::PlotToPixels(mouse.x - 0.12, mouse.y).x;
-                const float label_rect_right = ImPlot::PlotToPixels(mouse.x + 0.12, mouse.y).x;
-                const float label_rect_top = ImPlot::GetPlotPos().y;
-                const float label_rect_bottom = label_rect_top + ImPlot::GetPlotSize().y;
+            draw_list->AddRectFilled(
+                ImVec2(label_rect_left, label_rect_top), ImVec2(label_rect_right, label_rect_bottom),
+                IM_COL32(70, 149, 235, 100));
+            ImPlot::PopPlotClipRect();
+            // Tooltip
+            const ImPlotPoint mouse = ImPlot::GetPlotMousePos();
+            if (ImPlot::IsPlotHovered() && cursorWithinXRegion(mouse.x)) {
                 int round_mouse_x = (int) round(mouse.x);
                 if (round_mouse_x < 0) {
                     round_mouse_x = 0;
                 } else if (round_mouse_x >= buildTimeLabels.elements) {
                     round_mouse_x = (int) buildTimeLabels.elements - 1;
                 }
-                if (cursorWithinXRegion(mouse.x)) {
-                    ImPlot::PushPlotClipRect();
-                    draw_list->AddRectFilled(
-                        ImVec2(label_rect_left, label_rect_top), ImVec2(label_rect_right, label_rect_bottom),
-                        IM_COL32(70, 149, 235, 100));
-                    ImPlot::PopPlotClipRect();
-                }
-                if (cursorWithinXRegion(mouse.x)) {
-                    ImGui::BeginTooltip();
-                    ImGui::Text("%s", buildTimeLabels.labels[round_mouse_x]);
-                    ImGui::EndTooltip();
-                }
+                round_mouse_x_all = round_mouse_x;
+                ImGui::BeginTooltip();
+                ImGui::Text("%s", buildTimeLabels.labels[round_mouse_x]);
+                ImGui::EndTooltip();
             }
+
             if (ImPlot::BeginCustomContext()) {
                 if (ImGui::MenuItem("Sort by ", y_label)) {
                     sort_and_shuffle(attribute_index);
