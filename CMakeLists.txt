@@ -156,7 +156,6 @@ target_include_directories(collector-web PRIVATE
     ${textedit_dir}
     ${fplus_dir}
     ${imgui_markdown_dir}
-    ${json_c_dir}
     ${json_c_processed_dir}
     ${clipboard_dir}
 )

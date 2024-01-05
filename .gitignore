@@ -3,3 +3,5 @@ build_*/
 cmake-build*/
 .idea/
 external
+build-release
+target
