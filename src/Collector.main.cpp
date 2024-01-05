@@ -315,9 +315,21 @@ void BuildTime_Plots() {
         ImGui::BeginGroup();
         {
             for (int i = 0; i < bTimePerfMeta.number_of_attributes; i++) {
-                ImGui::Checkbox(bTimePerfData[i].name, &bTimePerfData[i].visible);
-                //if (i % 4 != 0) { ImGui::SameLine(); }
-                ImGui::SameLine();
+                static char title[MAX_ATTRIBUTE_LENGTH]{};
+                sprintf(title, "%-*s", MAX_ATTRIBUTE_LENGTH, bTimePerfData[i].name);
+                ImGui::Checkbox(title, &bTimePerfData[i].visible);
+                if ((i + 1) % 4 != 0) { ImGui::SameLine(); }
+            }
+            if (ImGui::Button("Hide all")) {
+                for (int i = 0; i < bTimePerfMeta.number_of_attributes; i++) {
+                    bTimePerfData[i].visible = false;
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Show all")) {
+                for (int i = 0; i < bTimePerfMeta.number_of_attributes; i++) {
+                    bTimePerfData[i].visible = true;
+                }
             }
         }
         ImGui::EndGroup();
@@ -612,7 +624,7 @@ void StatusBarGui() {
 int main(int, char **) {
     // Propagates clipboard data from the browser as there is no native API for it.
     emscripten_browser_clipboard::paste([](std::string const &paste_data, void *callback_data [[maybe_unused]]) {
-        //printf("Paste callback: %s\n", paste_data.c_str());
+        // printf("Paste callback: %s\n", paste_data.c_str());
         // IDE says that this move has no effect. It has effect in my WASM build.
         clipboard_content = std::move(paste_data);
     });
