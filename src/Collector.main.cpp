@@ -314,11 +314,21 @@ void BuildTime_Plots() {
         ImGui::SameLine();
         ImGui::BeginGroup();
         {
-            for (int i = 0; i < bTimePerfMeta.number_of_attributes; i++) {
-                static char title[MAX_ATTRIBUTE_LENGTH]{};
-                sprintf(title, "%-*s", MAX_ATTRIBUTE_LENGTH, bTimePerfData[i].name);
-                ImGui::Checkbox(title, &bTimePerfData[i].visible);
-                if ((i + 1) % 4 != 0) { ImGui::SameLine(); }
+            static ImGuiTableFlags flags = ImGuiTableFlags_BordersV | ImGuiTableFlags_BordersOuterH | ImGuiTableFlags_Resizable | ImGuiTableFlags_RowBg;
+            if (ImGui::BeginTable("## Show/hide", 4, flags)) {
+                int column_index = 4;
+                int row_index = -1;
+                for (int i = 0; i < bTimePerfMeta.number_of_attributes; i++) {
+                    if (column_index > 3) {
+                        ImGui::TableNextRow();
+                        column_index = 0;
+                        row_index++;
+                    }
+                    ImGui::TableSetColumnIndex(column_index);
+                    ImGui::Checkbox(bTimePerfData[i].name, &bTimePerfData[i].visible);
+                    column_index++;
+                }
+                ImGui::EndTable();
             }
             if (ImGui::Button("Hide all")) {
                 for (int i = 0; i < bTimePerfMeta.number_of_attributes; i++) {
