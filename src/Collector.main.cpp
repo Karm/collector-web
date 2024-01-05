@@ -210,9 +210,9 @@ inline bool cursorWithinXRegion(double mouse_x) {
 
 void plotBuildTime(int row, int col, ImU32 attribute_index) {
     const double *values = bTimePerfData[attribute_index].data;
-    const double ymax = bTimePerfData[attribute_index].max;
-    static char title[17]{};
-    sprintf(title, "## row %d col %d", row, col);
+    const double ymax = MAX_MARGIN(bTimePerfData[attribute_index].max);
+    static char title[32]{};
+    sprintf(title, "## row %d col %d i %d", row, col, attribute_index);
     static ImPlotRect lims(0, 12, 0, 1);
     if (ImPlot::BeginAlignedPlots("AlignedGroup", true)) {
         if (ImPlot::BeginPlot(title, ImVec2(-1, 0), ImPlotFlags_NoCentralMenu)) {
@@ -268,6 +268,9 @@ void plotBuildTime(int row, int col, ImU32 attribute_index) {
                 if (ImGui::MenuItem("Sort by ", y_label)) {
                     sort_and_shuffle(attribute_index);
                 }
+                if (ImGui::MenuItem("Hide ", y_label)) {
+                    bTimePerfData[attribute_index].visible = false;
+                }
                 ImPlot::EndCustomContext(true);// true = append standard menu
             }
             ImPlot::EndPlot();
@@ -313,7 +316,8 @@ void BuildTime_Plots() {
         {
             for (int i = 0; i < bTimePerfMeta.number_of_attributes; i++) {
                 ImGui::Checkbox(bTimePerfData[i].name, &bTimePerfData[i].visible);
-                if (i % 4 != 0) { ImGui::SameLine(); }
+                //if (i % 4 != 0) { ImGui::SameLine(); }
+                ImGui::SameLine();
             }
         }
         ImGui::EndGroup();
@@ -327,45 +331,22 @@ void BuildTime_Plots() {
             ImGui::TableHeadersRow();
             ImPlot::PushColormap(ImPlotColormap_Deep);
 
-            int active_cells = 0;
+            int column_index = 3;
+            int row_index = -1;
             for (int i = 0; i < bTimePerfMeta.number_of_attributes; i++) {
                 if (bTimePerfData[i].visible) {
-                    active_cells++;
+                    if (column_index > 2) {
+                        ImGui::TableNextRow();
+                        column_index = 0;
+                        row_index++;
+                    }
+                    ImGui::TableSetColumnIndex(column_index);
+                    plotBuildTime(row_index, column_index, i);
+                    column_index++;
                 }
             }
-
-            // IMHO we have to re - thing the whole structure.To have visibility as a flag on a struct.We get trapped otherwise...
-            // The number of active ones is correct.The indexes are wrong.it is a mess now.
-
-            const ImU32 rows3 = active_cells / 3;
-            const ImU32 rowsReminder = active_cells % 3;
-            int row = 0;
-            for (; row < rows3; row++) {
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0);
-                ImGui::PushID(row);
-                plotBuildTime(row, 0, row * 3);
-                ImGui::PopID();
-                ImGui::TableSetColumnIndex(1);
-                ImGui::PushID(row);
-                plotBuildTime(row, 1, row * 3 + 1);
-                ImGui::PopID();
-                ImGui::TableSetColumnIndex(2);
-                ImGui::PushID(row);
-                plotBuildTime(row, 2, row * 3 + 2);
-                ImGui::PopID();
-            }
-            if (rowsReminder > 0) {
-                ImGui::TableNextRow();
-                row++;
-            }
-            for (int col = 0; col < rowsReminder; col++) {
-                ImGui::TableSetColumnIndex(col);
-                ImGui::PushID(row);
-                plotBuildTime(row, col, (row - 1) * 3 + col);
-                ImGui::PopID();
-            }
         }
+
         ImPlot::PopColormap();
         ImGui::EndTable();
     }
@@ -632,6 +613,7 @@ int main(int, char **) {
     // Propagates clipboard data from the browser as there is no native API for it.
     emscripten_browser_clipboard::paste([](std::string const &paste_data, void *callback_data [[maybe_unused]]) {
         //printf("Paste callback: %s\n", paste_data.c_str());
+        // IDE says that this move has no effect. It has effect in my WASM build.
         clipboard_content = std::move(paste_data);
     });
     HelloImGui::RunnerParams runnerParams;
