@@ -12,39 +12,21 @@
 #include <json.h>
 
 #define MAX_RECORDS_ROW 1024
-#define MAX_LINES_CHART 5
 #define MAX_LABEL_LENGTH 256
 #define MAX_MARGIN(x) (x + x / 3)
-
 // Visual, chart labeling tooltip
 #define TOOLTIP_REGION 0.12
+#define MAX_ATTRIBUTE_LENGTH 24
 
-struct BuildTime {
-    ImU64 classes_jni[MAX_RECORDS_ROW];
-    ImU64 fields_jni[MAX_RECORDS_ROW];
-    ImU64 methods_jni[MAX_RECORDS_ROW];
-    ImU64 classes_reflection[MAX_RECORDS_ROW];
-    ImU64 fields_reflection[MAX_RECORDS_ROW];
-    ImU64 resources_count[MAX_RECORDS_ROW];
-    ImU64 resources_bytes[MAX_RECORDS_ROW];
-    ImU64 classes_reachable[MAX_RECORDS_ROW];
-    ImU64 classes_total[MAX_RECORDS_ROW];
-    ImU64 fields_reachable[MAX_RECORDS_ROW];
-    ImU64 fields_total[MAX_RECORDS_ROW];
-    ImU64 methods_reachable[MAX_RECORDS_ROW];
-    ImU64 methods_total[MAX_RECORDS_ROW];
-    ImU64 methods_reflection[MAX_RECORDS_ROW];
-    ImU64 total_build_time_ms[MAX_RECORDS_ROW];
-    ImU64 gc_total_ms[MAX_RECORDS_ROW];
-    ImU64 peak_rss_bytes[MAX_RECORDS_ROW];
-    ImU64 image_heap_bytes[MAX_RECORDS_ROW];
-    ImU64 image_total_bytes[MAX_RECORDS_ROW];
-    ImU64 code_area_bytes[MAX_RECORDS_ROW];
-} buildTime, buildTimeContemporary[MAX_LINES_CHART];
+struct BTimePerf {
+    double data[MAX_RECORDS_ROW]{};
+    char name[MAX_ATTRIBUTE_LENGTH]{};
+    bool visible = true;
+    double max = 0;
+};
 
-#define BUILD_TIME_METRICS 20
 /**
- * We have 20 metrics in total for build time
+ * Keep these indexes aligned with the order in bTimePerfData[].
  */
 #define TOTAL_BUILD_TIME_MS_IDX 0
 #define GC_TOTAL_MS_IDX 1
@@ -66,99 +48,45 @@ struct BuildTime {
 #define METHODS_TOTAL_IDX 17
 #define RESOURCES_BYTES_IDX 18
 #define RESOURCES_COUNT_IDX 19
+BTimePerf bTimePerfData[]{
+    {.name = "total_build_time_ms"},
+    {.name = "gc_total_ms"},
+    {.name = "peak_rss_bytes"},
+    {.name = "image_heap_bytes"},
+    {.name = "code_area_bytes"},
+    {.name = "image_total_bytes"},
+    {.name = "classes_jni"},
+    {.name = "classes_reachable"},
+    {.name = "classes_reflection"},
+    {.name = "classes_total"},
+    {.name = "fields_jni"},
+    {.name = "fields_reachable"},
+    {.name = "fields_reflection"},
+    {.name = "fields_total"},
+    {.name = "methods_jni"},
+    {.name = "methods_reachable"},
+    {.name = "methods_reflection"},
+    {.name = "methods_total"},
+    {.name = "resources_bytes"},
+    {.name = "resources_count"}};
 
-/**
- * This order dictates the order of the columns and rows in the table.
- * Mind updating the indices above if you change the order.
- */
-const char *ATTRIBUTE_NAMES[] = {
-    "total_build_time_ms",
-    "gc_total_ms",
-    "peak_rss_bytes",
-    "image_heap_bytes",
-    "code_area_bytes",
-    "image_total_bytes",
-    "classes_jni",
-    "classes_reachable",
-    "classes_reflection",
-    "classes_total",
-    "fields_jni",
-    "fields_reachable",
-    "fields_reflection",
-    "fields_total",
-    "methods_jni",
-    "methods_reachable",
-    "methods_reflection",
-    "methods_total",
-    "resources_bytes",
-    "resources_count"};
-
-/**
- * Order matters, as in ATTRIBUTE_NAMES
- */
-ImU64 *DATA_ARRAYS[] = {
-    buildTime.total_build_time_ms,
-    buildTime.gc_total_ms,
-    buildTime.peak_rss_bytes,
-    buildTime.image_heap_bytes,
-    buildTime.code_area_bytes,
-    buildTime.image_total_bytes,
-    buildTime.classes_jni,
-    buildTime.classes_reachable,
-    buildTime.classes_reflection,
-    buildTime.classes_total,
-    buildTime.fields_jni,
-    buildTime.fields_reachable,
-    buildTime.fields_reflection,
-    buildTime.fields_total,
-    buildTime.methods_jni,
-    buildTime.methods_reachable,
-    buildTime.methods_reflection,
-    buildTime.methods_total,
-    buildTime.resources_bytes,
-    buildTime.resources_count};
+struct BTimePerfMeta {
+    const size_t number_of_attributes = *(&bTimePerfData + 1) - bTimePerfData;
+    ImU32 sorted_by = TOTAL_BUILD_TIME_MS_IDX;
+    char labels[MAX_RECORDS_ROW][MAX_LABEL_LENGTH]{};
+    double positions[MAX_RECORDS_ROW]{};
+    ImU32 elements = 0;
+} bTimePerfMeta;
 
 struct Downloads {
     float download_progress_bar = 0.f;
     bool download_in_progress = false;
     time_t download_timestamp{};
     bool download_error = false;
-    char api_token[129];
+    char api_token[129]{};
     bool has_api_token = false;
     bool api_key_popup = true;
 } downloads;
-
-struct BuildTimeLabels {
-    ImU64 max_classes_jni = 0;
-    ImU64 max_fields_jni = 0;
-    ImU64 max_methods_jni = 0;
-    ImU64 max_classes_reflection = 0;
-    ImU64 max_fields_reflection = 0;
-    ImU64 max_resources_count = 0;
-    ImU64 max_resources_bytes = 0;
-    ImU64 max_classes_reachable = 0;
-    ImU64 max_classes_total = 0;
-    ImU64 max_fields_reachable = 0;
-    ImU64 max_fields_total = 0;
-    ImU64 max_methods_reachable = 0;
-    ImU64 max_methods_total = 0;
-    ImU64 max_methods_reflection = 0;
-    ImU64 max_total_build_time_ms = 0;
-    ImU64 max_gc_total_ms = 0;
-    ImU64 max_peak_rss_bytes = 0;
-    ImU64 max_image_heap_bytes = 0;
-    ImU64 max_image_total_bytes = 0;
-    ImU64 max_code_area_bytes = 0;
-    char labels[MAX_RECORDS_ROW][MAX_LABEL_LENGTH]{};
-    double positions[MAX_RECORDS_ROW]{};
-    ImU32 elements = 0;
-    ImU32 sorted_by = TOTAL_BUILD_TIME_MS_IDX;
-} buildTimeLabels, buildTimeLabelsContemporary[MAX_LINES_CHART];
-
-struct BuildTimeContemporaryLines {
-    ImU32 elements = 0;
-    char labels[MAX_RECORDS_ROW][MAX_LABEL_LENGTH]{};
-} buildTimeContemporaryLines;
 
 inline ImU64 min(const ImU64 n, ...) {
     va_list p;
@@ -201,8 +129,8 @@ int BytesFormatter(double value, char *buff, int size, void *data) {
     return snprintf(buff, size, "%4.2f %s%s", value / v[3], p[3], unit);
 }
 
-void swap_uint64(ImU64 *a, ImU64 *b) {
-    ImU64 temp = *a;
+void swap_double(double *a, double *b) {
+    const double temp = *a;
     *a = *b;
     *b = temp;
 }
@@ -214,194 +142,76 @@ void swap_str(char *a, char *b) {
     strncpy(b, temp, MAX_LABEL_LENGTH);
 }
 
-int partition(ImU64 arr[], int low, int high, int selected_array, ImU64 *other_arrays[]) {
-    const ImU64 pivot = arr[high];
+int partition(double arr[], int low, int high, ImU32 selected_attribute) {
+    const double pivot = arr[high];
     int i = low - 1;
     for (int j = low; j <= high - 1; j++) {
         if (arr[j] < pivot) {
             i++;
-            swap_uint64(&arr[i], &arr[j]);
+            swap_double(&arr[i], &arr[j]);
             // Swap corresponding elements in other arrays
-            for (int k = 0; k < BUILD_TIME_METRICS; k++) {
-                if (k != selected_array) {
-                    swap_uint64(&other_arrays[k][i], &other_arrays[k][j]);
+            for (int k = 0; k < bTimePerfMeta.number_of_attributes; k++) {
+                if (k != selected_attribute) {
+                    swap_double(&bTimePerfData[k].data[i], &bTimePerfData[k].data[j]);
                 }
             }
-            swap_str(buildTimeLabels.labels[i], buildTimeLabels.labels[j]);
+            swap_str(bTimePerfMeta.labels[i], bTimePerfMeta.labels[j]);
         }
     }
-    swap_uint64(&arr[i + 1], &arr[high]);
+    swap_double(&arr[i + 1], &arr[high]);
     // Swap corresponding elements in other arrays
-    for (int k = 0; k < BUILD_TIME_METRICS; k++) {
-        if (k != selected_array) {
-            swap_uint64(&other_arrays[k][i + 1], &other_arrays[k][high]);
+    for (int k = 0; k < bTimePerfMeta.number_of_attributes; k++) {
+        if (k != selected_attribute) {
+            swap_double(&bTimePerfData[k].data[i + 1], &bTimePerfData[k].data[high]);
         }
     }
-    swap_str(buildTimeLabels.labels[i + 1], buildTimeLabels.labels[high]);
+    swap_str(bTimePerfMeta.labels[i + 1], bTimePerfMeta.labels[high]);
     return (i + 1);
 }
 
-void qsort_shuffle(ImU64 arr[], int low, int high, int selected_array, ImU64 *other_arrays[]) {
+/**
+ * This is your usual quicksort, naive as in a textbook, no optimizations.
+ * In addition to that, it shuffles data in all our data arrays to stay aligned,
+ * i.e. if data x used to be on index 3 and now it's on index 4, this move takes
+ * place in all arrays, not just the one we are sorting.
+ * @param arr
+ * @param low
+ * @param high
+ * @param selected_attribute
+ */
+void qsort_shuffle(double arr[], int low, int high, ImU32 selected_attribute) {
     if (low < high) {
-        const int pi = partition(arr, low, high, selected_array, other_arrays);
-        qsort_shuffle(arr, low, pi - 1, selected_array, other_arrays);
-        qsort_shuffle(arr, pi + 1, high, selected_array, other_arrays);
+        const int pi = partition(arr, low, high, selected_attribute);
+        qsort_shuffle(arr, low, pi - 1, selected_attribute);
+        qsort_shuffle(arr, pi + 1, high, selected_attribute);
     }
 }
 
-void sort_and_shuffle(int selected_array) {
-    if (selected_array < 0 || selected_array >= BUILD_TIME_METRICS) {
-        printf("Invalid selected_array index.\n");
+void sort_and_shuffle(ImU32 selected_attribute) {
+    if (selected_attribute >= bTimePerfMeta.number_of_attributes) {
+        printf("Invalid selected_attribute index.\n");
         return;
     }
-
-    buildTimeLabels.sorted_by = selected_array;
-
-    //printf("Sorting by %s\n", ATTRIBUTE_NAMES[selected_array]);
-
-    ImU64 *selected;
-    switch (selected_array) {
-        case CLASSES_JNI_IDX:
-            selected = buildTime.classes_jni;
-            break;
-        case FIELDS_JNI_IDX:
-            selected = buildTime.fields_jni;
-            break;
-        case METHODS_JNI_IDX:
-            selected = buildTime.methods_jni;
-            break;
-        case CLASSES_REFLECTION_IDX:
-            selected = buildTime.classes_reflection;
-            break;
-        case FIELDS_REFLECTION_IDX:
-            selected = buildTime.fields_reflection;
-            break;
-        case RESOURCES_COUNT_IDX:
-            selected = buildTime.resources_count;
-            break;
-        case RESOURCES_BYTES_IDX:
-            selected = buildTime.resources_bytes;
-            break;
-        case CLASSES_REACHABLE_IDX:
-            selected = buildTime.classes_reachable;
-            break;
-        case CLASSES_TOTAL_IDX:
-            selected = buildTime.classes_total;
-            break;
-        case FIELDS_REACHABLE_IDX:
-            selected = buildTime.fields_reachable;
-            break;
-        case FIELDS_TOTAL_IDX:
-            selected = buildTime.fields_total;
-            break;
-        case METHODS_REACHABLE_IDX:
-            selected = buildTime.methods_reachable;
-            break;
-        case METHODS_TOTAL_IDX:
-            selected = buildTime.methods_total;
-            break;
-        case METHODS_REFLECTION_IDX:
-            selected = buildTime.methods_reflection;
-            break;
-        case TOTAL_BUILD_TIME_MS_IDX:
-            selected = buildTime.total_build_time_ms;
-            break;
-        case GC_TOTAL_MS_IDX:
-            selected = buildTime.gc_total_ms;
-            break;
-        case PEAK_RSS_BYTES_IDX:
-            selected = buildTime.peak_rss_bytes;
-            break;
-        case IMAGE_HEAP_BYTES_IDX:
-            selected = buildTime.image_heap_bytes;
-            break;
-        case IMAGE_TOTAL_BYTES_IDX:
-            selected = buildTime.image_total_bytes;
-            break;
-        case CODE_AREA_BYTES_IDX:
-            selected = buildTime.code_area_bytes;
-            break;
-        default:
-            printf("Invalid selected_array index.\n");
-            return;
+    if (bTimePerfMeta.elements < 1) {
+        return;
     }
-
-    qsort_shuffle(selected, 0, buildTimeLabels.elements - 1, selected_array, DATA_ARRAYS);
+    bTimePerfMeta.sorted_by = selected_attribute;
+    qsort_shuffle(bTimePerfData[selected_attribute].data, 0, (int) bTimePerfMeta.elements - 1, selected_attribute);
 }
 
+/**
+ * We use this to draw a rectangle around x axes indices when cursor is near.
+ * @param mouse_x
+ * @return
+ */
 inline bool cursorWithinXRegion(double mouse_x) {
     return abs(mouse_x - (int) round(mouse_x)) < TOOLTIP_REGION;
 }
 
-void plotBuildTime(int row, int col, int attribute_index) {
-    ImU64 *values;
-    double ymax;
-    const char *y_label = ATTRIBUTE_NAMES[attribute_index];
-    if (attribute_index == CLASSES_JNI_IDX) {
-        ymax = MAX_MARGIN(buildTimeLabels.max_classes_jni);
-        values = buildTime.classes_jni;
-    } else if (attribute_index == CLASSES_REACHABLE_IDX) {
-        ymax = MAX_MARGIN(buildTimeLabels.max_classes_reachable);
-        values = buildTime.classes_reachable;
-    } else if (attribute_index == CLASSES_REFLECTION_IDX) {
-        ymax = MAX_MARGIN(buildTimeLabels.max_classes_reflection);
-        values = buildTime.classes_reflection;
-    } else if (attribute_index == CLASSES_TOTAL_IDX) {
-        ymax = MAX_MARGIN(buildTimeLabels.max_classes_total);
-        values = buildTime.classes_total;
-    } else if (attribute_index == CODE_AREA_BYTES_IDX) {
-        ymax = MAX_MARGIN(buildTimeLabels.max_code_area_bytes);
-        values = buildTime.code_area_bytes;
-    } else if (attribute_index == FIELDS_JNI_IDX) {
-        ymax = MAX_MARGIN(buildTimeLabels.max_fields_jni);
-        values = buildTime.fields_jni;
-    } else if (attribute_index == FIELDS_REACHABLE_IDX) {
-        ymax = MAX_MARGIN(buildTimeLabels.max_fields_reachable);
-        values = buildTime.fields_reachable;
-    } else if (attribute_index == FIELDS_REFLECTION_IDX) {
-        ymax = MAX_MARGIN(buildTimeLabels.max_fields_reflection);
-        values = buildTime.fields_reflection;
-    } else if (attribute_index == FIELDS_TOTAL_IDX) {
-        ymax = MAX_MARGIN(buildTimeLabels.max_fields_total);
-        values = buildTime.fields_total;
-    } else if (attribute_index == GC_TOTAL_MS_IDX) {
-        ymax = MAX_MARGIN(buildTimeLabels.max_gc_total_ms);
-        values = buildTime.gc_total_ms;
-    } else if (attribute_index == IMAGE_HEAP_BYTES_IDX) {
-        ymax = MAX_MARGIN(buildTimeLabels.max_image_heap_bytes);
-        values = buildTime.image_heap_bytes;
-    } else if (attribute_index == IMAGE_TOTAL_BYTES_IDX) {
-        ymax = MAX_MARGIN(buildTimeLabels.max_image_total_bytes);
-        values = buildTime.image_total_bytes;
-    } else if (attribute_index == METHODS_JNI_IDX) {
-        ymax = MAX_MARGIN(buildTimeLabels.max_methods_jni);
-        values = buildTime.methods_jni;
-    } else if (attribute_index == METHODS_REACHABLE_IDX) {
-        ymax = MAX_MARGIN(buildTimeLabels.max_methods_reachable);
-        values = buildTime.methods_reachable;
-    } else if (attribute_index == METHODS_REFLECTION_IDX) {
-        ymax = MAX_MARGIN(buildTimeLabels.max_methods_reflection);
-        values = buildTime.methods_reflection;
-    } else if (attribute_index == METHODS_TOTAL_IDX) {
-        ymax = MAX_MARGIN(buildTimeLabels.max_methods_total);
-        values = buildTime.methods_total;
-    } else if (attribute_index == PEAK_RSS_BYTES_IDX) {
-        ymax = MAX_MARGIN(buildTimeLabels.max_peak_rss_bytes);
-        values = buildTime.peak_rss_bytes;
-    } else if (attribute_index == RESOURCES_BYTES_IDX) {
-        ymax = MAX_MARGIN(buildTimeLabels.max_resources_bytes);
-        values = buildTime.resources_bytes;
-    } else if (attribute_index == RESOURCES_COUNT_IDX) {
-        ymax = MAX_MARGIN(buildTimeLabels.max_resources_count);
-        values = buildTime.resources_count;
-    } else if (attribute_index == TOTAL_BUILD_TIME_MS_IDX) {
-        ymax = MAX_MARGIN(buildTimeLabels.max_total_build_time_ms);
-        values = buildTime.total_build_time_ms;
-    } else {
-        //TODO: Error, inform user...
-        printf("Error, index unknown.\n");
-    }
-    static char title[17] = {};
+void plotBuildTime(int row, int col, ImU32 attribute_index) {
+    const double *values = bTimePerfData[attribute_index].data;
+    const double ymax = bTimePerfData[attribute_index].max;
+    static char title[17]{};
     sprintf(title, "## row %d col %d", row, col);
     static ImPlotRect lims(0, 12, 0, 1);
     if (ImPlot::BeginAlignedPlots("AlignedGroup", true)) {
@@ -414,17 +224,18 @@ void plotBuildTime(int row, int col, int attribute_index) {
             } else if (attribute_index == TOTAL_BUILD_TIME_MS_IDX || attribute_index == GC_TOTAL_MS_IDX) {
                 ImPlot::SetupAxisFormat(ImAxis_Y1, SecondsFormatter, (void *) "s");
             }
-
             ImPlot::SetupAxisLinks(ImAxis_X1, &lims.X.Min, &lims.X.Max);
             ImPlot::SetupAxesLimits(-0.5f, lims.X.Max, 0, ymax);
-            ImPlot::SetupAxisTicks(ImAxis_X1, buildTimeLabels.positions, (int) buildTimeLabels.elements);
-            if (attribute_index != buildTimeLabels.sorted_by) {
+            ImPlot::SetupAxisTicks(ImAxis_X1, bTimePerfMeta.positions, (int) bTimePerfMeta.elements);
+            if (attribute_index != bTimePerfMeta.sorted_by) {
                 ImPlot::SetNextLineStyle(quarkus_magenta_color, 1);
             } else {
                 ImPlot::SetNextLineStyle(quarkus_blue_color, 1);
             }
+
+            const char *y_label = bTimePerfData[attribute_index].name;
             // Drawing the actual line chart
-            ImPlot::PlotLine(y_label, values, (int) buildTimeLabels.elements);
+            ImPlot::PlotLine(y_label, values, (int) bTimePerfMeta.elements);
 
             // Rectangle marking a point on x axes for all charts
             static int round_mouse_x_all = 0;
@@ -444,12 +255,12 @@ void plotBuildTime(int row, int col, int attribute_index) {
                 int round_mouse_x = (int) round(mouse.x);
                 if (round_mouse_x < 0) {
                     round_mouse_x = 0;
-                } else if (round_mouse_x >= buildTimeLabels.elements) {
-                    round_mouse_x = (int) buildTimeLabels.elements - 1;
+                } else if (round_mouse_x >= bTimePerfMeta.elements) {
+                    round_mouse_x = (int) bTimePerfMeta.elements - 1;
                 }
                 round_mouse_x_all = round_mouse_x;
                 ImGui::BeginTooltip();
-                ImGui::Text("%s", buildTimeLabels.labels[round_mouse_x]);
+                ImGui::Text("%s", bTimePerfMeta.labels[round_mouse_x]);
                 ImGui::EndTooltip();
             }
 
@@ -465,76 +276,47 @@ void plotBuildTime(int row, int col, int attribute_index) {
     }
 }
 
-void BuildTimeContemporary_Plots() {
-    if (buildTimeLabels.elements > 0) {
-        static ImGuiTableFlags flags = ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV |
-                                       ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_Reorderable;
-        if (ImGui::BeginTable("##table 3", 3, flags, ImVec2(-1, 0))) {
-            ImGui::TableSetupColumn("##col1", ImGuiTableColumnFlags_WidthStretch, 33.0f);
-            ImGui::TableSetupColumn("##col2", ImGuiTableColumnFlags_WidthStretch, 33.0f);
-            ImGui::TableSetupColumn("##col3", ImGuiTableColumnFlags_WidthStretch, 33.0f);
-            ImGui::TableHeadersRow();
-            ImPlot::PushColormap(ImPlotColormap_Deep);
-            const size_t num_attributes = *(&ATTRIBUTE_NAMES + 1) - ATTRIBUTE_NAMES;
-            const ImU32 rows3 = num_attributes / 3;
-            const ImU32 rowsReminder = num_attributes % 3;
-            int row = 0;
-            for (; row < rows3; row++) {
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0);
-                ImGui::PushID(row);
-                plotBuildTime(row, 0, row * 3);
-                ImGui::PopID();
-                ImGui::TableSetColumnIndex(1);
-                ImGui::PushID(row);
-                plotBuildTime(row, 1, row * 3 + 1);
-                ImGui::PopID();
-                ImGui::TableSetColumnIndex(2);
-                ImGui::PushID(row);
-                plotBuildTime(row, 2, row * 3 + 2);
-                ImGui::PopID();
-            }
-            if (rowsReminder > 0) {
-                ImGui::TableNextRow();
-                row++;
-            }
-            for (int col = 0; col < rowsReminder; col++) {
-                ImGui::TableSetColumnIndex(col);
-                ImGui::PushID(row);
-                plotBuildTime(row, col, (row - 1) * 3 + col);
-                ImGui::PopID();
-            }
-        }
-        ImPlot::PopColormap();
-        ImGui::EndTable();
-    }
-}
-
 void BuildTime_Plots() {
-    if (buildTimeLabels.elements > 0) {
+    if (bTimePerfMeta.elements > 0) {
         char first[IMPLOT_LABEL_MAX_SIZE];
         char last[IMPLOT_LABEL_MAX_SIZE];
         char gap[IMPLOT_LABEL_MAX_SIZE];
-        const ImU64 gap_value = DATA_ARRAYS[buildTimeLabels.sorted_by][buildTimeLabels.elements - 1] - DATA_ARRAYS[buildTimeLabels.sorted_by][0];
-        if (buildTimeLabels.sorted_by == CODE_AREA_BYTES_IDX || buildTimeLabels.sorted_by == IMAGE_HEAP_BYTES_IDX ||
-            buildTimeLabels.sorted_by == IMAGE_TOTAL_BYTES_IDX || buildTimeLabels.sorted_by == PEAK_RSS_BYTES_IDX ||
-            buildTimeLabels.sorted_by == RESOURCES_BYTES_IDX) {
-            BytesFormatter(DATA_ARRAYS[buildTimeLabels.sorted_by][0], first, sizeof(first), (void *) "B");
-            BytesFormatter(DATA_ARRAYS[buildTimeLabels.sorted_by][buildTimeLabels.elements - 1], last, sizeof(last), (void *) "B");
+        const double gap_value = bTimePerfData[bTimePerfMeta.sorted_by].data[bTimePerfMeta.elements - 1] - bTimePerfData[bTimePerfMeta.sorted_by].data[0];
+        if (bTimePerfMeta.sorted_by == CODE_AREA_BYTES_IDX || bTimePerfMeta.sorted_by == IMAGE_HEAP_BYTES_IDX ||
+            bTimePerfMeta.sorted_by == IMAGE_TOTAL_BYTES_IDX || bTimePerfMeta.sorted_by == PEAK_RSS_BYTES_IDX ||
+            bTimePerfMeta.sorted_by == RESOURCES_BYTES_IDX) {
+            BytesFormatter(bTimePerfData[bTimePerfMeta.sorted_by].data[0], first, sizeof(first), (void *) "B");
+            BytesFormatter(bTimePerfData[bTimePerfMeta.sorted_by].data[bTimePerfMeta.elements - 1], last, sizeof(last), (void *) "B");
             BytesFormatter(gap_value, gap, sizeof(gap), (void *) "B");
-        } else if (buildTimeLabels.sorted_by == TOTAL_BUILD_TIME_MS_IDX || buildTimeLabels.sorted_by == GC_TOTAL_MS_IDX) {
-            SecondsFormatter(DATA_ARRAYS[buildTimeLabels.sorted_by][0], first, sizeof(first), (void *) "s");
-            SecondsFormatter(DATA_ARRAYS[buildTimeLabels.sorted_by][buildTimeLabels.elements - 1], last, sizeof(last), (void *) "s");
+        } else if (bTimePerfMeta.sorted_by == TOTAL_BUILD_TIME_MS_IDX || bTimePerfMeta.sorted_by == GC_TOTAL_MS_IDX) {
+            SecondsFormatter(bTimePerfData[bTimePerfMeta.sorted_by].data[0], first, sizeof(first), (void *) "s");
+            SecondsFormatter(bTimePerfData[bTimePerfMeta.sorted_by].data[bTimePerfMeta.elements - 1], last, sizeof(last), (void *) "s");
             SecondsFormatter(gap_value, gap, sizeof(gap), (void *) "s");
         } else {
-            snprintf(first, sizeof(first), "%4.2llu", DATA_ARRAYS[buildTimeLabels.sorted_by][0]);
-            snprintf(last, sizeof(last), "%4.2llu", DATA_ARRAYS[buildTimeLabels.sorted_by][buildTimeLabels.elements - 1]);
-            snprintf(gap, sizeof(gap), "%4.2llu", gap_value);
+            snprintf(first, sizeof(first), "%4.2f", bTimePerfData[bTimePerfMeta.sorted_by].data[0]);
+            snprintf(last, sizeof(last), "%4.2f", bTimePerfData[bTimePerfMeta.sorted_by].data[bTimePerfMeta.elements - 1]);
+            snprintf(gap, sizeof(gap), "%4.2f", gap_value);
         }
-        ImGui::Text("Dataset sorted by: %s", ATTRIBUTE_NAMES[buildTimeLabels.sorted_by]);
-        ImGui::BulletText("First in dataset: %s\nValue: %s", buildTimeLabels.labels[0], first);
-        ImGui::BulletText("Last in dataset: %s\nValue: %s", buildTimeLabels.labels[buildTimeLabels.elements - 1], last);
-        ImGui::BulletText("Gap between the first and the last: %s", gap);
+
+        ImGui::BeginGroup();
+        {
+            //Could be useful, but would need to call the sorting function too...
+            //ImGui::Combo("Dataset sorted by: ", &buildTimeLabels.sorted_by, ATTRIBUTE_NAMES, IM_ARRAYSIZE(ATTRIBUTE_NAMES));
+            ImGui::Text("Dataset sorted by: %s", bTimePerfData[bTimePerfMeta.sorted_by].name);
+            ImGui::BulletText("First in dataset: %s\nValue: %s", bTimePerfMeta.labels[0], first);
+            ImGui::BulletText("Last in dataset: %s\nValue: %s", bTimePerfMeta.labels[bTimePerfMeta.elements - 1], last);
+            ImGui::BulletText("Gap between the first and the last: %s", gap);
+        }
+        ImGui::EndGroup();
+        ImGui::SameLine();
+        ImGui::BeginGroup();
+        {
+            for (int i = 0; i < bTimePerfMeta.number_of_attributes; i++) {
+                ImGui::Checkbox(bTimePerfData[i].name, &bTimePerfData[i].visible);
+                if (i % 4 != 0) { ImGui::SameLine(); }
+            }
+        }
+        ImGui::EndGroup();
 
         static ImGuiTableFlags flags = ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV |
                                        ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_Reorderable;
@@ -544,9 +326,19 @@ void BuildTime_Plots() {
             ImGui::TableSetupColumn("##col3", ImGuiTableColumnFlags_WidthStretch, 33.0f);
             ImGui::TableHeadersRow();
             ImPlot::PushColormap(ImPlotColormap_Deep);
-            const size_t num_attributes = *(&ATTRIBUTE_NAMES + 1) - ATTRIBUTE_NAMES;
-            const ImU32 rows3 = num_attributes / 3;
-            const ImU32 rowsReminder = num_attributes % 3;
+
+            int active_cells = 0;
+            for (int i = 0; i < bTimePerfMeta.number_of_attributes; i++) {
+                if (bTimePerfData[i].visible) {
+                    active_cells++;
+                }
+            }
+
+            // IMHO we have to re - thing the whole structure.To have visibility as a flag on a struct.We get trapped otherwise...
+            // The number of active ones is correct.The indexes are wrong.it is a mess now.
+
+            const ImU32 rows3 = active_cells / 3;
+            const ImU32 rowsReminder = active_cells % 3;
             int row = 0;
             for (; row < rows3; row++) {
                 ImGui::TableNextRow();
@@ -579,12 +371,12 @@ void BuildTime_Plots() {
     }
 }
 
-void processBuildtimeJSON(const char *data, int length) {
-    buildTimeLabels.elements = 0;
+void processBuildtimeJSON(const char *data, uint64_t length) {
+    bTimePerfMeta.elements = 0;
     json_object *root;
     enum json_tokener_error jerr;
     struct json_tokener *tok = json_tokener_new();
-    root = json_tokener_parse_ex(tok, data, length);
+    root = json_tokener_parse_ex(tok, data, (int) length);
     if ((jerr = json_tokener_get_error(tok)) != json_tokener_success) {
         printf("Error: %s\n", json_tokener_error_desc(jerr));
         // TODO: There are extra chars. We should abort, inform user...
@@ -617,165 +409,25 @@ void processBuildtimeJSON(const char *data, int length) {
         char *tmp_ptr;
         char *builder_image = strtok_r(tag_, ",", &tmp_ptr);
         char *quarkus_version = strtok_r(nullptr, ",", &tmp_ptr);
-        memset(buildTimeLabels.labels[j], 0, MAX_LABEL_LENGTH);
-        sprintf(buildTimeLabels.labels[j], "Image: %s\nQuarkus: %s\nTimestamp: %s", builder_image, quarkus_version, created_at_);
-        buildTimeLabels.positions[j] = j;// 1 element has 1 position
+        memset(bTimePerfMeta.labels[j], 0, MAX_LABEL_LENGTH);
+        sprintf(bTimePerfMeta.labels[j], "Image: %s\nQuarkus: %s\nTimestamp: %s", builder_image, quarkus_version, created_at_);
+        bTimePerfMeta.positions[j] = j;// 1 element has 1 position
     }
 
-    const size_t num_attributes = *(&ATTRIBUTE_NAMES + 1) - ATTRIBUTE_NAMES;
-
     // TODO: Full picture - would new builds replace the older ones?
-
-    for (int i = 0; i < num_attributes; i++) {
-        //printf("Processing %s\n", ATTRIBUTE_NAMES[i]);
-        const char *attribute_name = ATTRIBUTE_NAMES[i];
-        const json_object *array = json_object_object_get(root, attribute_name);
-        //const size_t array_length = min(2, json_object_array_length(array), MAX_RECORDS_ROW);
-        if (strncmp(ATTRIBUTE_NAMES[CLASSES_JNI_IDX], attribute_name, strlen(attribute_name)) == 0) {
-            for (int j = 0; j < array_length; j++) {
-                buildTime.classes_jni[j] = json_object_get_uint64(json_object_array_get_idx(array, j));
-                if (buildTime.classes_jni[j] > buildTimeLabels.max_classes_jni) {
-                    buildTimeLabels.max_classes_jni = buildTime.classes_jni[j];
-                }
-            }
-        } else if (strncmp(ATTRIBUTE_NAMES[CLASSES_REACHABLE_IDX], attribute_name, strlen(attribute_name)) == 0) {
-            for (int j = 0; j < array_length; j++) {
-                buildTime.classes_reachable[j] = json_object_get_uint64(json_object_array_get_idx(array, j));
-                if (buildTime.classes_reachable[j] > buildTimeLabels.max_classes_reachable) {
-                    buildTimeLabels.max_classes_reachable = buildTime.classes_reachable[j];
-                }
-            }
-        } else if (strncmp(ATTRIBUTE_NAMES[CLASSES_REFLECTION_IDX], attribute_name, strlen(attribute_name)) == 0) {
-            for (int j = 0; j < array_length; j++) {
-                buildTime.classes_reflection[j] = json_object_get_uint64(json_object_array_get_idx(array, j));
-                if (buildTime.classes_reflection[j] > buildTimeLabels.max_classes_reflection) {
-                    buildTimeLabels.max_classes_reflection = buildTime.classes_reflection[j];
-                }
-            }
-        } else if (strncmp(ATTRIBUTE_NAMES[CLASSES_TOTAL_IDX], attribute_name, strlen(attribute_name)) == 0) {
-            for (int j = 0; j < array_length; j++) {
-                buildTime.classes_total[j] = json_object_get_uint64(json_object_array_get_idx(array, j));
-                if (buildTime.classes_total[j] > buildTimeLabels.max_classes_total) {
-                    buildTimeLabels.max_classes_total = buildTime.classes_total[j];
-                }
-            }
-        } else if (strncmp(ATTRIBUTE_NAMES[CODE_AREA_BYTES_IDX], attribute_name, strlen(attribute_name)) == 0) {
-            for (int j = 0; j < array_length; j++) {
-                buildTime.code_area_bytes[j] = json_object_get_uint64(json_object_array_get_idx(array, j));
-                if (buildTime.code_area_bytes[j] > buildTimeLabels.max_code_area_bytes) {
-                    buildTimeLabels.max_code_area_bytes = buildTime.code_area_bytes[j];
-                }
-            }
-        } else if (strncmp(ATTRIBUTE_NAMES[FIELDS_JNI_IDX], attribute_name, strlen(attribute_name)) == 0) {
-            for (int j = 0; j < array_length; j++) {
-                buildTime.fields_jni[j] = json_object_get_uint64(json_object_array_get_idx(array, j));
-                if (buildTime.fields_jni[j] > buildTimeLabels.max_fields_jni) {
-                    buildTimeLabels.max_fields_jni = buildTime.fields_jni[j];
-                }
-            }
-        } else if (strncmp(ATTRIBUTE_NAMES[FIELDS_REACHABLE_IDX], attribute_name, strlen(attribute_name)) == 0) {
-            for (int j = 0; j < array_length; j++) {
-                buildTime.fields_reachable[j] = json_object_get_uint64(json_object_array_get_idx(array, j));
-                if (buildTime.fields_reachable[j] > buildTimeLabels.max_fields_reachable) {
-                    buildTimeLabels.max_fields_reachable = buildTime.fields_reachable[j];
-                }
-            }
-        } else if (strncmp(ATTRIBUTE_NAMES[FIELDS_REFLECTION_IDX], attribute_name, strlen(attribute_name)) == 0) {
-            for (int j = 0; j < array_length; j++) {
-                buildTime.fields_reflection[j] = json_object_get_uint64(json_object_array_get_idx(array, j));
-                if (buildTime.fields_reflection[j] > buildTimeLabels.max_fields_reflection) {
-                    buildTimeLabels.max_fields_reflection = buildTime.fields_reflection[j];
-                }
-            }
-        } else if (strncmp(ATTRIBUTE_NAMES[FIELDS_TOTAL_IDX], attribute_name, strlen(attribute_name)) == 0) {
-            for (int j = 0; j < array_length; j++) {
-                buildTime.fields_total[j] = json_object_get_uint64(json_object_array_get_idx(array, j));
-                if (buildTime.fields_total[j] > buildTimeLabels.max_fields_total) {
-                    buildTimeLabels.max_fields_total = buildTime.fields_total[j];
-                }
-            }
-        } else if (strncmp(ATTRIBUTE_NAMES[GC_TOTAL_MS_IDX], attribute_name, strlen(attribute_name)) == 0) {
-            for (int j = 0; j < array_length; j++) {
-                buildTime.gc_total_ms[j] = json_object_get_uint64(json_object_array_get_idx(array, j));
-                if (buildTime.gc_total_ms[j] > buildTimeLabels.max_gc_total_ms) {
-                    buildTimeLabels.max_gc_total_ms = buildTime.gc_total_ms[j];
-                }
-            }
-        } else if (strncmp(ATTRIBUTE_NAMES[IMAGE_HEAP_BYTES_IDX], attribute_name, strlen(attribute_name)) == 0) {
-            for (int j = 0; j < array_length; j++) {
-                buildTime.image_heap_bytes[j] = json_object_get_uint64(json_object_array_get_idx(array, j));
-                if (buildTime.image_heap_bytes[j] > buildTimeLabels.max_image_heap_bytes) {
-                    buildTimeLabels.max_image_heap_bytes = buildTime.image_heap_bytes[j];
-                }
-            }
-        } else if (strncmp(ATTRIBUTE_NAMES[IMAGE_TOTAL_BYTES_IDX], attribute_name, strlen(attribute_name)) == 0) {
-            for (int j = 0; j < array_length; j++) {
-                buildTime.image_total_bytes[j] = json_object_get_uint64(json_object_array_get_idx(array, j));
-                if (buildTime.image_total_bytes[j] > buildTimeLabels.max_image_total_bytes) {
-                    buildTimeLabels.max_image_total_bytes = buildTime.image_total_bytes[j];
-                }
-            }
-        } else if (strncmp(ATTRIBUTE_NAMES[METHODS_JNI_IDX], attribute_name, strlen(attribute_name)) == 0) {
-            for (int j = 0; j < array_length; j++) {
-                buildTime.methods_jni[j] = json_object_get_uint64(json_object_array_get_idx(array, j));
-                if (buildTime.methods_jni[j] > buildTimeLabels.max_methods_jni) {
-                    buildTimeLabels.max_methods_jni = buildTime.methods_jni[j];
-                }
-            }
-        } else if (strncmp(ATTRIBUTE_NAMES[METHODS_REACHABLE_IDX], attribute_name, strlen(attribute_name)) == 0) {
-            for (int j = 0; j < array_length; j++) {
-                buildTime.methods_reachable[j] = json_object_get_uint64(json_object_array_get_idx(array, j));
-                if (buildTime.methods_reachable[j] > buildTimeLabels.max_methods_reachable) {
-                    buildTimeLabels.max_methods_reachable = buildTime.methods_reachable[j];
-                }
-            }
-        } else if (strncmp(ATTRIBUTE_NAMES[METHODS_REFLECTION_IDX], attribute_name, strlen(attribute_name)) == 0) {
-            for (int j = 0; j < array_length; j++) {
-                buildTime.methods_reflection[j] = json_object_get_uint64(json_object_array_get_idx(array, j));
-                if (buildTime.methods_reflection[j] > buildTimeLabels.max_methods_reflection) {
-                    buildTimeLabels.max_methods_reflection = buildTime.methods_reflection[j];
-                }
-            }
-        } else if (strncmp(ATTRIBUTE_NAMES[METHODS_TOTAL_IDX], attribute_name, strlen(attribute_name)) == 0) {
-            for (int j = 0; j < array_length; j++) {
-                buildTime.methods_total[j] = json_object_get_uint64(json_object_array_get_idx(array, j));
-                if (buildTime.methods_total[j] > buildTimeLabels.max_methods_total) {
-                    buildTimeLabels.max_methods_total = buildTime.methods_total[j];
-                }
-            }
-        } else if (strncmp(ATTRIBUTE_NAMES[PEAK_RSS_BYTES_IDX], attribute_name, strlen(attribute_name)) == 0) {
-            for (int j = 0; j < array_length; j++) {
-                buildTime.peak_rss_bytes[j] = json_object_get_uint64(json_object_array_get_idx(array, j));
-                if (buildTime.peak_rss_bytes[j] > buildTimeLabels.max_peak_rss_bytes) {
-                    buildTimeLabels.max_peak_rss_bytes = buildTime.peak_rss_bytes[j];
-                }
-            }
-        } else if (strncmp(ATTRIBUTE_NAMES[RESOURCES_BYTES_IDX], attribute_name, strlen(attribute_name)) == 0) {
-            for (int j = 0; j < array_length; j++) {
-                buildTime.resources_bytes[j] = json_object_get_uint64(json_object_array_get_idx(array, j));
-                if (buildTime.resources_bytes[j] > buildTimeLabels.max_resources_bytes) {
-                    buildTimeLabels.max_resources_bytes = buildTime.resources_bytes[j];
-                }
-            }
-        } else if (strncmp(ATTRIBUTE_NAMES[RESOURCES_COUNT_IDX], attribute_name, strlen(attribute_name)) == 0) {
-            for (int j = 0; j < array_length; j++) {
-                buildTime.resources_count[j] = json_object_get_uint64(json_object_array_get_idx(array, j));
-                if (buildTime.resources_count[j] > buildTimeLabels.max_resources_count) {
-                    buildTimeLabels.max_resources_count = buildTime.resources_count[j];
-                }
-            }
-        } else if (strncmp(ATTRIBUTE_NAMES[TOTAL_BUILD_TIME_MS_IDX], attribute_name, strlen(attribute_name)) == 0) {
-            for (int j = 0; j < array_length; j++) {
-                buildTime.total_build_time_ms[j] = json_object_get_uint64(json_object_array_get_idx(array, j));
-                if (buildTime.total_build_time_ms[j] > buildTimeLabels.max_total_build_time_ms) {
-                    buildTimeLabels.max_total_build_time_ms = buildTime.total_build_time_ms[j];
-                }
+    for (int i = 0; i < bTimePerfMeta.number_of_attributes; i++) {
+        const json_object *array = json_object_object_get(root, bTimePerfData[i].name);
+        for (int j = 0; j < array_length; j++) {
+            bTimePerfData[i].data[j] = json_object_get_double(json_object_array_get_idx(array, j));
+            if (bTimePerfData[i].data[j] > bTimePerfData[i].max) {
+                bTimePerfData[i].max = bTimePerfData[i].data[j];
             }
         }
     }
+
     sort_and_shuffle(TOTAL_BUILD_TIME_MS_IDX);
     json_tokener_free(tok);
-    buildTimeLabels.elements = array_length;
+    bTimePerfMeta.elements = array_length;
 }
 
 void downloadBuildtimeSucceeded(emscripten_fetch_t *fetch) {
@@ -791,7 +443,6 @@ void downloadProgress(emscripten_fetch_t *fetch) {
     downloads.download_in_progress = true;
     downloads.download_error = false;
     if (fetch->totalBytes) {
-        //printf("Downloading %s.. %.2f%% complete.\n", fetch->url, fetch->dataOffset * 100.0 / fetch->totalBytes);
         downloads.download_progress_bar = (float) fetch->dataOffset / (float) fetch->totalBytes;
     } else {
         // We don't know, so Windows 95 copy files progress bar...
@@ -799,7 +450,6 @@ void downloadProgress(emscripten_fetch_t *fetch) {
             downloads.download_progress_bar = 0;
         }
         downloads.download_progress_bar += .01f;
-        //printf("Downloading %s.. %lld bytes complete.\n", fetch->url, fetch->dataOffset + fetch->numBytes);
     }
 }
 
@@ -938,13 +588,13 @@ void CommandGui() {
     if (ImGui::IsItemHovered() && downloads.download_in_progress) {
         ImGui::SetTooltip("Download is already in progress...");
     }
-    if (buildTimeLabels.elements > 0 && !downloads.download_in_progress) {
+    if (bTimePerfMeta.elements > 0 && !downloads.download_in_progress) {
         static bool show_legend = false;
         ImGui::Checkbox("List the whole legend", &show_legend);
         if (show_legend) {
             // TODO: Impacts FPS when there are many records, we should pre-construct the string and cache it.
-            for (int i = 0; i < buildTimeLabels.elements; i++) {
-                ImGui::TextWrapped("%d%s - %s", i, (i < 10 ? " " : ""), buildTimeLabels.labels[i]);
+            for (int i = 0; i < bTimePerfMeta.elements; i++) {
+                ImGui::TextWrapped("%d%s - %s", i, (i < 10 ? " " : ""), bTimePerfMeta.labels[i]);
             }
         }
     }
@@ -1023,12 +673,6 @@ int main(int, char **) {
     buildTimeWindow.canBeClosed = false;
     buildTimeWindow.dockSpaceName = "MainDockSpace";
     buildTimeWindow.GuiFonction = BuildTime_Plots;
-
-    HelloImGui::DockableWindow buildTimeContemporaryWindow;
-    buildTimeContemporaryWindow.label = "Build time: Contemporary images";
-    buildTimeContemporaryWindow.canBeClosed = false;
-    buildTimeContemporaryWindow.dockSpaceName = "MainDockSpace";
-    buildTimeContemporaryWindow.GuiFonction = BuildTimeContemporary_Plots;
 
     runnerParams.dockingParams.dockableWindows = {commandsWindow, buildTimeWindow};//, buildTimeContemporaryWindow};//, chartsWindow, charts2Window, charts3Window};
 
