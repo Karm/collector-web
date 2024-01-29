@@ -13,6 +13,10 @@
 
 #define MAX_RECORDS_ROW 1024
 #define MAX_LABEL_LENGTH 256
+#define MAX_URL_LENGTH 256
+#define MAX_URL_LENGTH_AFTER_HASH MAX_URL_LENGTH - 65
+#define MAX_API_TOKEN_LENGTH 129
+#define MAX_ERR_MSG_LENGTH 256
 #define MAX_MARGIN(x) (x + x / 3)
 // Visual, chart labeling tooltip
 #define TOOLTIP_REGION 0.12
@@ -72,20 +76,29 @@ BTimePerf bTimePerfData[]{
 
 struct BTimePerfMeta {
     const size_t number_of_attributes = *(&bTimePerfData + 1) - bTimePerfData;
-    ImU32 sorted_by = TOTAL_BUILD_TIME_MS_IDX;
+    ImU32 sorted_by = -1;
     char labels[MAX_RECORDS_ROW][MAX_LABEL_LENGTH]{};
     double positions[MAX_RECORDS_ROW]{};
     ImU32 elements = 0;
+    char experiments[MAX_RECORDS_ROW][MAX_LABEL_LENGTH]{};
+    const char *experiments_pointers[MAX_RECORDS_ROW]{};
+    ImU32 experiments_elements = 0;
+    int current_experiment = 0;
 } bTimePerfMeta;
 
 struct Downloads {
     float download_progress_bar = 0.f;
     bool download_in_progress = false;
-    time_t download_timestamp{};
-    bool download_error = false;
-    char api_token[129]{};
+    char download_status_message[MAX_ERR_MSG_LENGTH]{};
+    char api_token[MAX_API_TOKEN_LENGTH]{};
     bool has_api_token = false;
     bool api_key_popup = true;
+    const char *servers[3] = {
+        "https://collector.foci.life/api/v1/image-stats",
+        "https://stage-collector.foci.life/api/v1/image-stats",
+        "http://127.0.0.1:8080/api/v1/image-stats"};
+    int current_server = 0;
+    char api_url[MAX_URL_LENGTH] = {};
 } downloads;
 
 inline ImU64 min(const ImU64 n, ...) {
@@ -105,6 +118,57 @@ inline ImU64 min(const ImU64 n, ...) {
 static ImVec4 quarkus_red_color = ImColor(IM_COL32(255, 0, 74, 255)).Value;
 static ImVec4 quarkus_blue_color = ImColor(IM_COL32(70, 149, 235, 255)).Value;
 static ImVec4 quarkus_magenta_color = ImColor(IM_COL32(205, 84, 225, 255)).Value;
+
+// Weird JS snippets we need to talk to the browser
+EM_JS(void, setCookie, (const char *name, const char *value), {
+    var d = new Date();
+    d.setDate(d.getDate() + 365);
+    document.cookie = UTF8ToString(name) + "=" + UTF8ToString(value) + ";SameSite=Strict;expires=" + d.toUTCString() + ";path=/";
+});
+
+EM_JS(char *, getCookie, (const char *name), {
+    var cookies = document.cookie.split(';');
+    var name_ = UTF8ToString(name);
+    for (var i = 0; i < cookies.length; i++) {
+        var cookie = cookies[i].trim();
+        if (cookie.indexOf(name_ + "=") == 0) {
+            var cookieValue = cookie.substring(name_.length + 1, cookie.length);
+            var lengthBytes = lengthBytesUTF8(cookieValue) + 1;
+            var stringOnWasmHeap = _malloc(lengthBytes);
+            stringToUTF8(cookieValue, stringOnWasmHeap, lengthBytes);
+            return stringOnWasmHeap;
+        }
+    }
+    return null;
+});
+
+EM_JS(void, setHashURLJS, (const char *value), {
+    window.location.href = window.location.href.split('#')[0] + "#" + UTF8ToString(value);
+});
+
+void setHashURL_(const char *fmt, va_list args) {
+    char hash[MAX_URL_LENGTH_AFTER_HASH];
+    vsnprintf(hash, sizeof(hash), fmt, args);
+    setHashURLJS(hash);
+}
+
+void setHashURL(const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    setHashURL_(fmt, args);
+    va_end(args);
+}
+
+EM_JS(char *, getHashURL, (), {
+    var urlParts = window.location.href.split('#');
+    if (urlParts.length > 1) {
+        var lengthBytes = lengthBytesUTF8(urlParts[1]) + 1;
+        var stringOnWasmHeap = _malloc(lengthBytes);
+        stringToUTF8(urlParts[1], stringOnWasmHeap, lengthBytes);
+        return stringOnWasmHeap;
+    }
+    return null;
+});
 
 int SecondsFormatter(double value, char *buff, int size, void *data) {
     const char *unit = (const char *) data;
@@ -196,6 +260,7 @@ void sort_and_shuffle(ImU32 selected_attribute) {
         return;
     }
     bTimePerfMeta.sorted_by = selected_attribute;
+    setHashURL("sort_by:%s", bTimePerfData[selected_attribute].name);
     qsort_shuffle(bTimePerfData[selected_attribute].data, 0, (int) bTimePerfMeta.elements - 1, selected_attribute);
 }
 
@@ -427,10 +492,62 @@ void processBuildtimeJSON(const char *data, uint64_t length) {
             }
         }
     }
-
-    sort_and_shuffle(TOTAL_BUILD_TIME_MS_IDX);
-    json_tokener_free(tok);
     bTimePerfMeta.elements = array_length;
+    const char *urlHash = getHashURL();
+    if (urlHash != nullptr && strncmp(urlHash, "sort_by:", 8) == 0) {
+        const char *sortBy = urlHash + 8;
+        for (int i = 0; i < bTimePerfMeta.number_of_attributes; i++) {
+            if (strncmp(sortBy, bTimePerfData[i].name, strlen(bTimePerfData[i].name)) == 0) {
+                sort_and_shuffle(i);
+                break;
+            }
+        }
+    } else {
+        sort_and_shuffle(TOTAL_BUILD_TIME_MS_IDX);
+    }
+    json_tokener_free(tok);
+    memset(downloads.download_status_message, 0, MAX_ERR_MSG_LENGTH);
+    const time_t timestamp = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    sprintf(downloads.download_status_message, "%.24s: %llu datapoints downloaded.", ctime(&timestamp), array_length);
+}
+
+void processExperiments(const char *data, uint64_t length) {
+    bTimePerfMeta.experiments_elements = 0;
+    json_object *root;
+    enum json_tokener_error jerr;
+    struct json_tokener *tok = json_tokener_new();
+    root = json_tokener_parse_ex(tok, data, (int) length);
+    if ((jerr = json_tokener_get_error(tok)) != json_tokener_success) {
+        printf("Error: %s\n", json_tokener_error_desc(jerr));
+        // TODO: There are extra chars. We should abort, inform user...
+    }
+    if (tok->char_offset < length) {
+        printf("Error: Something else happened...\n");
+        // TODO: There are extra chars. We should abort, inform user...
+    }
+    if (root == nullptr) {
+        // TODO abort, pop up a message...
+        printf("Error: The root element is null...\n");
+    }
+    const ImU64 array_length = min(2, (ImU64) json_object_array_length(root), (ImU64) MAX_RECORDS_ROW);
+    for (int j = 0; j < array_length; j++) {
+        char *experiment = const_cast<char *>(json_object_get_string(json_object_array_get_idx(root, j)));
+        memset(bTimePerfMeta.experiments[j], 0, MAX_LABEL_LENGTH);
+        sprintf(bTimePerfMeta.experiments[j], "%s", experiment);
+        bTimePerfMeta.experiments_pointers[j] = bTimePerfMeta.experiments[j];
+    }
+    bTimePerfMeta.experiments_elements = array_length;
+    memset(downloads.download_status_message, 0, MAX_ERR_MSG_LENGTH);
+    const time_t timestamp = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    sprintf(downloads.download_status_message, "%.24s: %llu experiments found.", ctime(&timestamp), array_length);
+    json_tokener_free(tok);
+}
+
+void downloadExperimentsSucceeded(emscripten_fetch_t *fetch) {
+    processExperiments(fetch->data, fetch->numBytes);
+    emscripten_fetch_close(fetch);// Free data associated with the fetch.
+    downloads.download_in_progress = false;
+    downloads.download_progress_bar = 0;
 }
 
 void downloadBuildtimeSucceeded(emscripten_fetch_t *fetch) {
@@ -438,13 +555,10 @@ void downloadBuildtimeSucceeded(emscripten_fetch_t *fetch) {
     emscripten_fetch_close(fetch);// Free data associated with the fetch.
     downloads.download_in_progress = false;
     downloads.download_progress_bar = 0;
-    downloads.download_error = false;
-    downloads.download_timestamp = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
 }
 
 void downloadProgress(emscripten_fetch_t *fetch) {
     downloads.download_in_progress = true;
-    downloads.download_error = false;
     if (fetch->totalBytes) {
         downloads.download_progress_bar = (float) fetch->dataOffset / (float) fetch->totalBytes;
     } else {
@@ -457,35 +571,17 @@ void downloadProgress(emscripten_fetch_t *fetch) {
 }
 
 void downloadFailed(emscripten_fetch_t *fetch) {
-    printf("Downloading %s failed, HTTP failure status code: %d.\n", fetch->url, fetch->status);
     emscripten_fetch_close(fetch);// Also free data on failure.
-    downloads.download_error = true;
+    memset(downloads.download_status_message, 0, MAX_ERR_MSG_LENGTH);
+    const time_t timestamp = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    if (fetch->status == 401) {
+        sprintf(downloads.download_status_message, "%.24s: Unauthorized. API key incorrect for %s?", ctime(&timestamp), downloads.servers[downloads.current_server]);
+    } else {
+        sprintf(downloads.download_status_message, "%.24s: HTTP failure status code: %d", ctime(&timestamp), fetch->status);
+    }
     downloads.download_progress_bar = 0;
     downloads.download_in_progress = false;
-    downloads.download_timestamp = NULL;
 }
-
-EM_JS(void, setCookie, (const char *name, const char *value), {
-    var d = new Date();
-    d.setDate(d.getDate() + 365);
-    document.cookie = UTF8ToString(name) + "=" + UTF8ToString(value) + ";SameSite=Strict;expires=" + d.toUTCString() + ";path=/";
-});
-
-EM_JS(char *, getCookie, (const char *name), {
-    var cookies = document.cookie.split(';');
-    var name_ = UTF8ToString(name);
-    for (var i = 0; i < cookies.length; i++) {
-        var cookie = cookies[i].trim();
-        if (cookie.indexOf(name_ + "=") == 0) {
-            var cookieValue = cookie.substring(name_.length + 1, cookie.length);
-            var lengthBytes = lengthBytesUTF8(cookieValue) + 1;
-            var stringOnWasmHeap = _malloc(lengthBytes);
-            stringToUTF8(cookieValue, stringOnWasmHeap, lengthBytes);
-            return stringOnWasmHeap;
-        }
-    }
-    return null;
-});
 
 static std::string clipboard_content;
 char const *get_content_for_imgui(void *user_data [[maybe_unused]]) {
@@ -562,34 +658,73 @@ inline void LoadAPIKey() {
     APIKeyModal();
 }
 
+void reloadServerExperiments() {
+    emscripten_fetch_attr_t attr;
+    emscripten_fetch_attr_init(&attr);
+    strcpy(attr.requestMethod, "GET");
+    const char *headers[] = {"Content-Type", "application/json", "token", downloads.api_token, 0};
+    attr.requestHeaders = headers;
+    attr.attributes = EMSCRIPTEN_FETCH_LOAD_TO_MEMORY;
+    attr.onsuccess = downloadExperimentsSucceeded;
+    attr.onerror = downloadFailed;
+    attr.onprogress = downloadProgress;
+    memset(downloads.api_url, 0, MAX_URL_LENGTH);
+    sprintf(downloads.api_url, "%s/%s", downloads.servers[downloads.current_server], "image-names/distinct");
+    emscripten_fetch(&attr, downloads.api_url);
+}
+
 //void CommandGui(AppState &state) {
 void CommandGui() {
     LoadAPIKey();
     HelloImGui::ImageFromAsset("quarkus.png");
     ImGui::SameLine();
     ImGui::TextWrapped("Quarkus Mandrel\nStats, charts, operations");
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Quarkus Mandrel perf charts demo...");
-    }
     ImGui::Separator();
-    if (ImGui::Button("Download buildtime dataset now")) {
-        if (!downloads.download_in_progress) {
-            emscripten_fetch_attr_t attr;
-            emscripten_fetch_attr_init(&attr);
-            strcpy(attr.requestMethod, "GET");
-            const char *headers[] = {"Content-Type", "application/json", "token", downloads.api_token, 0};
-            attr.requestHeaders = headers;
-            attr.attributes = EMSCRIPTEN_FETCH_LOAD_TO_MEMORY;
-            attr.onsuccess = downloadBuildtimeSucceeded;
-            attr.onerror = downloadFailed;
-            attr.onprogress = downloadProgress;
-            //emscripten_fetch(&attr, "http://127.0.0.1:8080/api/v1/image-stats/experiment/build-perf-karm-1.0.0-runner");
-            emscripten_fetch(&attr, "https://stage-collector.foci.life/api/v1/image-stats/experiment/build-perf-karm-1.0.0-runner");
-            //emscripten_fetch(&attr, "build_perf_data.json");
+    ImGui::Combo("Servers", &downloads.current_server, downloads.servers, IM_ARRAYSIZE(downloads.servers));
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Select a Collector server. Mind that you need an API key.");
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(ICON_FA_RECYCLE)) {
+        reloadServerExperiments();
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Fetch the list of experiments from the server again.");
+    }
+    static int last_server = -1;
+    if (last_server != downloads.current_server) {
+        last_server = downloads.current_server;
+        reloadServerExperiments();
+    }
+    if (bTimePerfMeta.experiments_elements > 0) {
+        ImGui::Combo("Experiments", &bTimePerfMeta.current_experiment, bTimePerfMeta.experiments_pointers, bTimePerfMeta.experiments_elements);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Select an experiment. Newest first.");
+        }
+        if (ImGui::Button("Download buildtime dataset now")) {
+            if (!downloads.download_in_progress) {
+                emscripten_fetch_attr_t attr;
+                emscripten_fetch_attr_init(&attr);
+                strcpy(attr.requestMethod, "GET");
+                const char *headers[] = {"Content-Type", "application/json", "token", downloads.api_token, 0};
+                attr.requestHeaders = headers;
+                attr.attributes = EMSCRIPTEN_FETCH_LOAD_TO_MEMORY;
+                attr.onsuccess = downloadBuildtimeSucceeded;
+                attr.onerror = downloadFailed;
+                attr.onprogress = downloadProgress;
+                //emscripten_fetch(&attr, "build_perf_data.json");
+                memset(downloads.api_url, 0, MAX_URL_LENGTH);
+                sprintf(downloads.api_url, "%s/experiment/%s", downloads.servers[downloads.current_server], bTimePerfMeta.experiments[bTimePerfMeta.current_experiment]);
+                emscripten_fetch(&attr, downloads.api_url);
+            }
         }
     }
-    if (ImGui::IsItemHovered() && downloads.download_in_progress) {
-        ImGui::SetTooltip("Download is already in progress...");
+    if (ImGui::IsItemHovered()) {
+        if (downloads.download_in_progress) {
+            ImGui::SetTooltip("Download is already in progress...");
+        } else {
+            ImGui::SetTooltip("Download the buildtime dataset for the selected experiment.");
+        }
     }
     if (bTimePerfMeta.elements > 0 && !downloads.download_in_progress) {
         static bool show_legend = false;
@@ -604,20 +739,10 @@ void CommandGui() {
 }
 
 void StatusBarGui() {
-    ImGui::Text("Dataset status:");
-    ImGui::SameLine();
     if (downloads.download_in_progress) {
         ImGui::ProgressBar(downloads.download_progress_bar, ImVec2(100.f, 15.f));
     } else {
-        if (downloads.download_timestamp == NULL) {
-            if (downloads.download_error) {
-                ImGui::Text("Failed to download data.");
-            } else {
-                ImGui::Text("No downloaded data.");
-            }
-        } else {
-            ImGui::Text("Downloaded on %s", ctime(&(downloads.download_timestamp)));
-        }
+        ImGui::Text("%s", downloads.download_status_message);
     }
     ImGui::SameLine();
     ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
