@@ -496,11 +496,16 @@ void processBuildtimeJSON(const char *data, uint64_t length) {
     const char *urlHash = getHashURL();
     if (urlHash != nullptr && strncmp(urlHash, "sort_by:", 8) == 0) {
         const char *sortBy = urlHash + 8;
+        bool wasSorted = false;
         for (int i = 0; i < bTimePerfMeta.number_of_attributes; i++) {
             if (strncmp(sortBy, bTimePerfData[i].name, strlen(bTimePerfData[i].name)) == 0) {
                 sort_and_shuffle(i);
+                wasSorted = true;
                 break;
             }
+        }
+        if (!wasSorted) {
+            sort_and_shuffle(TOTAL_BUILD_TIME_MS_IDX);
         }
     } else {
         sort_and_shuffle(TOTAL_BUILD_TIME_MS_IDX);
