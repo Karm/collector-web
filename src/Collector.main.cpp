@@ -10,17 +10,31 @@
 #include <emscripten/fetch.h>
 #include <iomanip>
 #include <json.h>
+#include <unistd.h>
 
 #define MAX_RECORDS_ROW 1024
 #define MAX_LABEL_LENGTH 256
 #define MAX_URL_LENGTH 256
-#define MAX_URL_LENGTH_AFTER_HASH MAX_URL_LENGTH - 65
+#define MAX_URL_LENGTH_AFTER_HASH (MAX_URL_LENGTH - 65)
 #define MAX_API_TOKEN_LENGTH 129
+#define MAX_EXPERIMENT_NAME_LENGTH 128
 #define MAX_ERR_MSG_LENGTH 256
 #define MAX_MARGIN(x) (x + x / 3)
 // Visual, chart labeling tooltip
 #define TOOLTIP_REGION 0.12
 #define MAX_ATTRIBUTE_LENGTH 24
+// https://github.com/Karm/collector/blob/main/src/main/java/com/redhat/quarkus/mandrel/collector/report/model/ImageStats.java
+// DB has BIGINT for ID, but this is O.K. now.
+#define MAX_DB_ID UINT32_MAX
+
+HelloImGui::RunnerParams runnerParams;
+bool first_time = true;
+
+struct AppTabs {
+    // Order matters.
+    const char *labels[2]{"Build-time: Full picture", "Run-time: Full picture"};
+    int selected = 0;
+} appTabs;
 
 struct BTimePerf {
     double data[MAX_RECORDS_ROW]{};
@@ -81,9 +95,11 @@ struct BTimePerfMeta {
     double positions[MAX_RECORDS_ROW]{};
     ImU32 elements = 0;
     char experiments[MAX_RECORDS_ROW][MAX_LABEL_LENGTH]{};
+    ImU32 experiments_ids[MAX_RECORDS_ROW]{};
     const char *experiments_pointers[MAX_RECORDS_ROW]{};
     ImU32 experiments_elements = 0;
     int current_experiment = 0;
+    char experiment_keyword[MAX_EXPERIMENT_NAME_LENGTH] = "perf";
 } bTimePerfMeta;
 
 struct Downloads {
@@ -93,11 +109,14 @@ struct Downloads {
     char api_token[MAX_API_TOKEN_LENGTH]{};
     bool has_api_token = false;
     bool api_key_popup = true;
+    // The order matters here. The first one is the default, and it's also a part of URL,
+    // e.g. http://127.0.0.1:7777/collector-web.html#s:2e:6666666sort_by:total_build_time_msshow:11000111101111111111
+    // the "s:2" means we are using the 3rd server from the list below.
+    int current_server = 0;
     const char *servers[3] = {
         "https://collector.foci.life/api/v1/image-stats",
         "https://stage-collector.foci.life/api/v1/image-stats",
         "http://127.0.0.1:8080/api/v1/image-stats"};
-    int current_server = 0;
     char api_url[MAX_URL_LENGTH] = {};
 } downloads;
 
@@ -149,6 +168,7 @@ EM_JS(void, setHashURLJS, (const char *value), {
 void setHashURL_(const char *fmt, va_list args) {
     char hash[MAX_URL_LENGTH_AFTER_HASH];
     vsnprintf(hash, sizeof(hash), fmt, args);
+    //printf("Setting hash URL: %s\n", hash);
     setHashURLJS(hash);
 }
 
@@ -159,7 +179,7 @@ void setHashURL(const char *fmt, ...) {
     va_end(args);
 }
 
-EM_JS(char *, getHashURL, (), {
+EM_JS(char *, getFragmentsFromURL, (), {
     var urlParts = window.location.href.split('#');
     if (urlParts.length > 1) {
         var lengthBytes = lengthBytesUTF8(urlParts[1]) + 1;
@@ -169,6 +189,26 @@ EM_JS(char *, getHashURL, (), {
     }
     return null;
 });
+
+void encodeStateToURL() {
+    //std::chrono::time_point start = std::chrono::high_resolution_clock::now();
+    char visibility[bTimePerfMeta.number_of_attributes + 1];
+    memset(visibility, 0, bTimePerfMeta.number_of_attributes + 1);
+    for (int i = 0; i < bTimePerfMeta.number_of_attributes; i++) {
+        visibility[i] = bTimePerfData[i].visible ? '1' : '0';
+    }
+    //t:0s:2l:[perf]e:174216sort_by:total_build_time_msshow:11100101100011000100
+    setHashURL("t:%ds:%dl:[%s]e:%dsort_by:%sshow:%s",
+               appTabs.selected,                                               // defaults to 0, the first one
+               downloads.current_server,                                       // defaults to 0, the first one
+               bTimePerfMeta.experiment_keyword,                               // defaults to "perf"
+               bTimePerfMeta.experiments_ids[bTimePerfMeta.current_experiment],// defaults to 0, the first one
+               bTimePerfMeta.elements > 0 ? bTimePerfData[bTimePerfMeta.sorted_by].name : "",
+               bTimePerfMeta.elements > 0 ? visibility : "");
+    //std::chrono::time_point finish = std::chrono::high_resolution_clock::now();
+    //std::chrono::duration<double, std::milli> elapsed = finish - start;
+    //printf("encodeStateToURL took: %f ms\n", elapsed.count());
+}
 
 int SecondsFormatter(double value, char *buff, int size, void *data) {
     const char *unit = (const char *) data;
@@ -243,25 +283,45 @@ int partition(double arr[], int low, int high, ImU32 selected_attribute) {
  * @param high
  * @param selected_attribute
  */
-void qsort_shuffle(double arr[], int low, int high, ImU32 selected_attribute) {
+void qsortShuffle(double arr[], int low, int high, ImU32 selected_attribute) {
     if (low < high) {
         const int pi = partition(arr, low, high, selected_attribute);
-        qsort_shuffle(arr, low, pi - 1, selected_attribute);
-        qsort_shuffle(arr, pi + 1, high, selected_attribute);
+        qsortShuffle(arr, low, pi - 1, selected_attribute);
+        qsortShuffle(arr, pi + 1, high, selected_attribute);
     }
 }
 
-void sort_and_shuffle(ImU32 selected_attribute) {
+void sortAndShuffle(ImU32 selected_attribute) {
     if (selected_attribute >= bTimePerfMeta.number_of_attributes) {
-        printf("Invalid selected_attribute index.\n");
+        printf("Invalid selected_attribute index %d\n", selected_attribute);
         return;
     }
     if (bTimePerfMeta.elements < 1) {
         return;
     }
     bTimePerfMeta.sorted_by = selected_attribute;
-    setHashURL("sort_by:%s", bTimePerfData[selected_attribute].name);
-    qsort_shuffle(bTimePerfData[selected_attribute].data, 0, (int) bTimePerfMeta.elements - 1, selected_attribute);
+    if (!first_time) {
+        // We don't want to encode partial state while the app is loading.
+        encodeStateToURL();
+    }
+    qsortShuffle(bTimePerfData[selected_attribute].data, 0, (int) bTimePerfMeta.elements - 1, selected_attribute);
+}
+
+void syncVisibilityFromURL() {
+    const char *urlFragments = getFragmentsFromURL();
+    if (urlFragments != nullptr && strlen(urlFragments) > 0) {
+        const char *result = strstr(urlFragments, "show:");
+        if (result != nullptr) {
+            char *p = const_cast<char *>(result + 5);
+            int i = 0;
+            while (i < bTimePerfMeta.number_of_attributes && p != nullptr && *p != '\0') {
+                //printf("Visibility: i: %d, value: %d\n", i, *p);
+                bTimePerfData[i].visible = *p == '1';
+                p++;
+                i++;
+            }
+        }
+    }
 }
 
 /**
@@ -331,7 +391,7 @@ void plotBuildTime(int row, int col, ImU32 attribute_index) {
 
             if (ImPlot::BeginCustomContext()) {
                 if (ImGui::MenuItem("Sort by ", y_label)) {
-                    sort_and_shuffle(attribute_index);
+                    sortAndShuffle(attribute_index);
                 }
                 if (ImGui::MenuItem("Hide ", y_label)) {
                     bTimePerfData[attribute_index].visible = false;
@@ -345,6 +405,12 @@ void plotBuildTime(int row, int col, ImU32 attribute_index) {
 }
 
 void BuildTime_Plots() {
+    if (!first_time) {
+        if (appTabs.selected != 0) {
+            appTabs.selected = 0;
+            encodeStateToURL();
+        }
+    }
     if (bTimePerfMeta.elements > 0) {
         char first[IMPLOT_LABEL_MAX_SIZE];
         char last[IMPLOT_LABEL_MAX_SIZE];
@@ -391,6 +457,10 @@ void BuildTime_Plots() {
                     }
                     ImGui::TableSetColumnIndex(column_index);
                     ImGui::Checkbox(bTimePerfData[i].name, &bTimePerfData[i].visible);
+                    if (ImGui::IsItemDeactivatedAfterEdit()) {
+                        //printf("Item clicked: index: %d, name: %s, visible: %d\n", i, bTimePerfData[i].name, bTimePerfData[i].visible);
+                        encodeStateToURL();
+                    }
                     column_index++;
                 }
                 ImGui::EndTable();
@@ -398,12 +468,14 @@ void BuildTime_Plots() {
             if (ImGui::Button("Hide all")) {
                 for (int i = 0; i < bTimePerfMeta.number_of_attributes; i++) {
                     bTimePerfData[i].visible = false;
+                    encodeStateToURL();
                 }
             }
             ImGui::SameLine();
             if (ImGui::Button("Show all")) {
                 for (int i = 0; i < bTimePerfMeta.number_of_attributes; i++) {
                     bTimePerfData[i].visible = true;
+                    encodeStateToURL();
                 }
             }
         }
@@ -436,6 +508,30 @@ void BuildTime_Plots() {
 
         ImPlot::PopColormap();
         ImGui::EndTable();
+    }
+}
+
+void RunTime_Plots() {
+    if (!first_time && appTabs.selected != 1) {
+        appTabs.selected = 1;
+        encodeStateToURL();
+    }
+    ImGui::Text("Meh.");
+}
+
+void syncSortedByFromURL() {
+    const char *urlFragments = getFragmentsFromURL();
+    if (urlFragments != nullptr && strlen(urlFragments) > 0) {
+        const char *result = strstr(urlFragments, "sort_by:");
+        if (result != nullptr) {
+            char *sortBy = const_cast<char *>(result + 8);
+            for (int i = 0; i < bTimePerfMeta.number_of_attributes; i++) {
+                if (strncmp(sortBy, bTimePerfData[i].name, strlen(bTimePerfData[i].name)) == 0) {
+                    bTimePerfMeta.sorted_by = i;
+                    break;
+                }
+            }
+        }
     }
 }
 
@@ -493,22 +589,10 @@ void processBuildtimeJSON(const char *data, uint64_t length) {
         }
     }
     bTimePerfMeta.elements = array_length;
-    const char *urlHash = getHashURL();
-    if (urlHash != nullptr && strncmp(urlHash, "sort_by:", 8) == 0) {
-        const char *sortBy = urlHash + 8;
-        bool wasSorted = false;
-        for (int i = 0; i < bTimePerfMeta.number_of_attributes; i++) {
-            if (strncmp(sortBy, bTimePerfData[i].name, strlen(bTimePerfData[i].name)) == 0) {
-                sort_and_shuffle(i);
-                wasSorted = true;
-                break;
-            }
-        }
-        if (!wasSorted) {
-            sort_and_shuffle(TOTAL_BUILD_TIME_MS_IDX);
-        }
+    if (bTimePerfMeta.sorted_by == -1) {
+        sortAndShuffle(TOTAL_BUILD_TIME_MS_IDX);
     } else {
-        sort_and_shuffle(TOTAL_BUILD_TIME_MS_IDX);
+        sortAndShuffle(bTimePerfMeta.sorted_by);
     }
     json_tokener_free(tok);
     memset(downloads.download_status_message, 0, MAX_ERR_MSG_LENGTH);
@@ -534,25 +618,50 @@ void processExperiments(const char *data, uint64_t length) {
         // TODO abort, pop up a message...
         printf("Error: The root element is null...\n");
     }
-    const ImU64 array_length = min(2, (ImU64) json_object_array_length(root), (ImU64) MAX_RECORDS_ROW);
-    for (int j = 0; j < array_length; j++) {
-        char *experiment = const_cast<char *>(json_object_get_string(json_object_array_get_idx(root, j)));
-        memset(bTimePerfMeta.experiments[j], 0, MAX_LABEL_LENGTH);
-        sprintf(bTimePerfMeta.experiments[j], "%s", experiment);
-        bTimePerfMeta.experiments_pointers[j] = bTimePerfMeta.experiments[j];
+    struct json_object_iterator it = json_object_iter_init_default();
+    it = json_object_iter_begin(root);
+    struct json_object_iterator itEnd = json_object_iter_end(root);
+    int i = 0;
+    while (!json_object_iter_equal(&it, &itEnd) && i < MAX_RECORDS_ROW) {
+        const char *id = json_object_iter_peek_name(&it);
+        const char *experiment = json_object_get_string(json_object_iter_peek_value(&it));
+        bTimePerfMeta.experiments_ids[i] = strtol(id, nullptr, 10);
+        //printf("id: %s, experiment: %s, experiment_id: %d\n", id, experiment, bTimePerfMeta.experiments_ids[i]);
+        memset(bTimePerfMeta.experiments[i], 0, MAX_LABEL_LENGTH);
+        sprintf(bTimePerfMeta.experiments[i], "%s", experiment);
+        bTimePerfMeta.experiments_pointers[i] = bTimePerfMeta.experiments[i];
+        json_object_iter_next(&it);
+        i++;
     }
-    bTimePerfMeta.experiments_elements = array_length;
+    bTimePerfMeta.experiments_elements = i;
     memset(downloads.download_status_message, 0, MAX_ERR_MSG_LENGTH);
     const time_t timestamp = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-    sprintf(downloads.download_status_message, "%.24s: %llu experiments found.", ctime(&timestamp), array_length);
+    sprintf(downloads.download_status_message, "%.24s: %d experiments found.", ctime(&timestamp), i);
     json_tokener_free(tok);
 }
 
-void downloadExperimentsSucceeded(emscripten_fetch_t *fetch) {
-    processExperiments(fetch->data, fetch->numBytes);
-    emscripten_fetch_close(fetch);// Free data associated with the fetch.
-    downloads.download_in_progress = false;
-    downloads.download_progress_bar = 0;
+void syncExperimentSelectorFromURL() {
+    const char *urlFragments = getFragmentsFromURL();
+    if (urlFragments != nullptr && strlen(urlFragments) > 0) {
+        const char *result = strstr(urlFragments, "e:");
+        if (result != nullptr) {
+            char *p = const_cast<char *>(result + 2);
+            char *end;
+            const long value = strtol(p, &end, 10);
+            if (p == end || value < 1 || value >= MAX_DB_ID) {
+                printf("Invalid experiment index value: %ld\n", value);
+                return;
+            }
+            for (int i = 0; i < bTimePerfMeta.experiments_elements; i++) {
+                //printf("experiment id: %u\n", bTimePerfMeta.experiments_ids[i]);
+                if (bTimePerfMeta.experiments_ids[i] == value) {
+                    bTimePerfMeta.current_experiment = i;
+                    //printf("experiment index: %d, id: %d, value: %s\n", i, bTimePerfMeta.experiments_ids[i], bTimePerfMeta.experiments[i]);
+                    return;
+                }
+            }
+        }
+    }
 }
 
 void downloadBuildtimeSucceeded(emscripten_fetch_t *fetch) {
@@ -586,6 +695,31 @@ void downloadFailed(emscripten_fetch_t *fetch) {
     }
     downloads.download_progress_bar = 0;
     downloads.download_in_progress = false;
+}
+
+void downloadDatasetAsync() {
+    if (!downloads.download_in_progress) {
+        emscripten_fetch_attr_t attr;
+        emscripten_fetch_attr_init(&attr);
+        strcpy(attr.requestMethod, "GET");
+        const char *headers[] = {"Content-Type", "application/json", "token", downloads.api_token, 0};
+        attr.requestHeaders = headers;
+        attr.attributes = EMSCRIPTEN_FETCH_LOAD_TO_MEMORY;
+        attr.onsuccess = downloadBuildtimeSucceeded;
+        attr.onerror = downloadFailed;
+        attr.onprogress = downloadProgress;
+        //emscripten_fetch(&attr, "build_perf_data.json");
+        memset(downloads.api_url, 0, MAX_URL_LENGTH);
+        sprintf(downloads.api_url, "%s/experiment/%s", downloads.servers[downloads.current_server], bTimePerfMeta.experiments[bTimePerfMeta.current_experiment]);
+        emscripten_fetch(&attr, downloads.api_url);
+    }
+}
+
+void downloadExperimentsSucceeded(emscripten_fetch_t *fetch) {
+    processExperiments(fetch->data, fetch->numBytes);
+    emscripten_fetch_close(fetch);// Free data associated with the fetch.
+    downloads.download_in_progress = false;
+    downloads.download_progress_bar = 0;
 }
 
 static std::string clipboard_content;
@@ -663,7 +797,7 @@ inline void LoadAPIKey() {
     APIKeyModal();
 }
 
-void reloadServerExperiments() {
+void downloadExperimentsAsync() {
     emscripten_fetch_attr_t attr;
     emscripten_fetch_attr_init(&attr);
     strcpy(attr.requestMethod, "GET");
@@ -674,54 +808,161 @@ void reloadServerExperiments() {
     attr.onerror = downloadFailed;
     attr.onprogress = downloadProgress;
     memset(downloads.api_url, 0, MAX_URL_LENGTH);
-    sprintf(downloads.api_url, "%s/%s", downloads.servers[downloads.current_server], "image-names/distinct");
+    sprintf(downloads.api_url, "%s/%s/%s", downloads.servers[downloads.current_server], "image-names/distinct", bTimePerfMeta.experiment_keyword);
     emscripten_fetch(&attr, downloads.api_url);
 }
 
-//void CommandGui(AppState &state) {
+void syncServerSelectorFromURL() {
+    const char *urlFragments = getFragmentsFromURL();
+    if (urlFragments != nullptr && strlen(urlFragments) > 0) {
+        const char *result = strstr(urlFragments, "s:");
+        if (result != nullptr) {
+            char *p = const_cast<char *>(result + 2);
+            char *end;
+            const int value = strtol(p, &end, 10);
+            if (p == end || value < 0 || value >= IM_ARRAYSIZE(downloads.servers)) {
+                printf("Invalid server index: %d\n", value);
+                return;
+            }
+            downloads.current_server = value;
+        }
+    }
+}
+
+void syncLookupKeywordFromURL() {
+    const char *urlFragments = getFragmentsFromURL();
+    if (urlFragments != nullptr && strlen(urlFragments) > 0) {
+        const char *result = strstr(urlFragments, "l:[");
+        if (result != nullptr) {
+            char *begin = const_cast<char *>(result + 3);
+            char *end = strstr(begin, "]");
+            if (end != nullptr) {
+                strncpy(bTimePerfMeta.experiment_keyword, begin, end - begin);
+            }
+        }
+    }
+}
+
+void syncTabFromURL() {
+    const char *urlFragments = getFragmentsFromURL();
+    if (urlFragments != nullptr && strlen(urlFragments) > 0) {
+        const char *result = strstr(urlFragments, "t:");
+        if (result != nullptr) {
+            char *p = const_cast<char *>(result + 2);
+            char *end;
+            const int value = strtol(p, &end, 10);
+            if (p == end || value < 0 || value >= IM_ARRAYSIZE(appTabs.labels)) {
+                printf("Invalid tab index: %d\n", value);
+                return;
+            }
+            appTabs.selected = value;
+            printf("TAB TO USE: %d\n", appTabs.selected);
+        }
+    }
+}
+
+//void CommandG%ld(AppState &state) {
 void CommandGui() {
     LoadAPIKey();
     HelloImGui::ImageFromAsset("quarkus.png");
     ImGui::SameLine();
     ImGui::TextWrapped("Quarkus Mandrel\nStats, charts, operations");
     ImGui::Separator();
+    ImGui::InputText("Lookup", bTimePerfMeta.experiment_keyword, IM_ARRAYSIZE(bTimePerfMeta.experiment_keyword));
+    if (ImGui::IsWindowFocused() && ImGui::IsKeyPressed(ImGuiKey_Enter)) {
+        encodeStateToURL();
+        downloadExperimentsAsync();
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Image name, i.e. usually executable name, that contains this keyword.");
+    }
     ImGui::Combo("Servers", &downloads.current_server, downloads.servers, IM_ARRAYSIZE(downloads.servers));
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Select a Collector server. Mind that you need an API key.");
+        ImGui::SetTooltip("Select a Collector server. Mind you need an API key.");
     }
     ImGui::SameLine();
     if (ImGui::Button(ICON_FA_RECYCLE)) {
-        reloadServerExperiments();
+        downloadExperimentsAsync();
     }
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("Fetch the list of experiments from the server again.");
     }
+    // Todo perhaps move from the loop altogether?
     static int last_server = -1;
+    static int last_experiment = -1;
+
+    if (first_time) {
+        /*
+        printf("Current tab: %d\n", appTabs.selected);
+        printf("Current server: %d\n", downloads.current_server);
+        printf("Current lookup: %s\n", bTimePerfMeta.experiment_keyword);
+        printf("Current experiment: %d\n", bTimePerfMeta.current_experiment);
+        printf("Current sorted by: %s\n", bTimePerfData[bTimePerfMeta.sorted_by].name);
+        printf("Current visibility: ");
+        for (int i = 0; i < bTimePerfMeta.number_of_attributes; i++) {
+            printf("%c", bTimePerfData[i].visible ? '1' : '0');
+        }
+        printf("\n");
+        printf("\n");
+        */
+        if (last_server == -1) {
+            syncTabFromURL();
+            syncServerSelectorFromURL();
+            //printf("Current server: %d\n", downloads.current_server);
+            last_server = downloads.current_server;
+            syncLookupKeywordFromURL();
+            downloadExperimentsAsync();
+        }
+        // Which tab should we jump in on app load.
+        runnerParams.dockingParams.focusDockableWindow(appTabs.labels[appTabs.selected]);
+        // Wait till experiments are loaded.
+        if (bTimePerfMeta.experiments_elements > 0) {
+            syncExperimentSelectorFromURL();
+            //printf("Current experiment: %d\n", bTimePerfMeta.current_experiment);
+            last_experiment = bTimePerfMeta.current_experiment;
+            syncVisibilityFromURL();
+            syncSortedByFromURL();
+            downloadDatasetAsync();
+            first_time = false;
+        }
+        /*
+        printf("Current tab: %d\n", appTabs.selected);
+        printf("Current server: %d\n", downloads.current_server);
+        printf("Current lookup: %s\n", bTimePerfMeta.experiment_keyword);
+        printf("Current experiment: %d\n", bTimePerfMeta.current_experiment);
+        printf("Current sorted by: %s\n", bTimePerfData[bTimePerfMeta.sorted_by].name);
+        printf("Current visibility: ");
+        for (int i = 0; i < bTimePerfMeta.number_of_attributes; i++) {
+            printf("%c", bTimePerfData[i].visible ? '1' : '0');
+        }
+        printf("\n");
+        printf("\n");
+         */
+    }
+
+    // We detect the first page load, and we want to download the experiments for the selected server.
     if (last_server != downloads.current_server) {
+        //printf("Last server: %d, current server: %d\n", last_server, downloads.current_server);
+        downloadExperimentsAsync();
         last_server = downloads.current_server;
-        reloadServerExperiments();
+        bTimePerfMeta.current_experiment = 0;
+        encodeStateToURL();
     }
     if (bTimePerfMeta.experiments_elements > 0) {
         ImGui::Combo("Experiments", &bTimePerfMeta.current_experiment, bTimePerfMeta.experiments_pointers, bTimePerfMeta.experiments_elements);
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("Select an experiment. Newest first.");
         }
+
+        if (last_experiment != bTimePerfMeta.current_experiment) {
+            //printf("Last experiment: %d, current experiment: %d\n", last_experiment, bTimePerfMeta.current_experiment);
+            encodeStateToURL();
+            downloadDatasetAsync();
+            last_experiment = bTimePerfMeta.current_experiment;
+        }
+
         if (ImGui::Button("Download buildtime dataset now")) {
-            if (!downloads.download_in_progress) {
-                emscripten_fetch_attr_t attr;
-                emscripten_fetch_attr_init(&attr);
-                strcpy(attr.requestMethod, "GET");
-                const char *headers[] = {"Content-Type", "application/json", "token", downloads.api_token, 0};
-                attr.requestHeaders = headers;
-                attr.attributes = EMSCRIPTEN_FETCH_LOAD_TO_MEMORY;
-                attr.onsuccess = downloadBuildtimeSucceeded;
-                attr.onerror = downloadFailed;
-                attr.onprogress = downloadProgress;
-                //emscripten_fetch(&attr, "build_perf_data.json");
-                memset(downloads.api_url, 0, MAX_URL_LENGTH);
-                sprintf(downloads.api_url, "%s/experiment/%s", downloads.servers[downloads.current_server], bTimePerfMeta.experiments[bTimePerfMeta.current_experiment]);
-                emscripten_fetch(&attr, downloads.api_url);
-            }
+            downloadDatasetAsync();
         }
     }
     if (ImGui::IsItemHovered()) {
@@ -753,11 +994,18 @@ void StatusBarGui() {
     ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
     ImGui::SameLine();
     ImGui::Text("API token: %s", downloads.has_api_token ? "Set" : "Missing");
+    ImGui::SameLine();
     static std::string credit = "Proudly powered by [imgui](https://github.com/ocornut/imgui), "
                                 "[hello_imgui](https://github.com/pthom/hello_imgui) and "
                                 "[implot](https://github.com/epezent/implot).";
-    ImGui::SameLine(ImGui::GetIO().DisplaySize.x - 420.f);
+    ImGui::SameLine(ImGui::GetIO().DisplaySize.x - 500.f);
     MarkdownHelper::Markdown(credit);
+    ImGui::SameLine();
+    ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
+    ImGui::SameLine();
+    ImGui::Text("karm@redhat.com");
+    ImGui::SameLine();
+    ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
     ImGui::SameLine();
 }
 
@@ -768,7 +1016,6 @@ int main(int, char **) {
         // IDE says that this move has no effect. It has effect in my WASM build.
         clipboard_content = std::move(paste_data);
     });
-    HelloImGui::RunnerParams runnerParams;
     runnerParams.appWindowParams.windowTitle = "Collector";
     runnerParams.appWindowParams.windowSize = {800, 600};
     runnerParams.imGuiWindowParams.showStatusBar = true;
@@ -803,12 +1050,18 @@ int main(int, char **) {
     commandsWindow.GuiFonction = CommandGui;
 
     HelloImGui::DockableWindow buildTimeWindow;
-    buildTimeWindow.label = "Build time: Full picture";
+    buildTimeWindow.label = appTabs.labels[0];
     buildTimeWindow.canBeClosed = false;
     buildTimeWindow.dockSpaceName = "MainDockSpace";
     buildTimeWindow.GuiFonction = BuildTime_Plots;
 
-    runnerParams.dockingParams.dockableWindows = {commandsWindow, buildTimeWindow};//, buildTimeContemporaryWindow};//, chartsWindow, charts2Window, charts3Window};
+    HelloImGui::DockableWindow runTimeWindow;
+    runTimeWindow.label = appTabs.labels[1];
+    runTimeWindow.canBeClosed = false;
+    runTimeWindow.dockSpaceName = "MainDockSpace";
+    runTimeWindow.GuiFonction = RunTime_Plots;
+
+    runnerParams.dockingParams.dockableWindows = {commandsWindow, buildTimeWindow, runTimeWindow};
 
     //runnerParams.fpsIdling TODO: Newer HelloImgui version needed
 
