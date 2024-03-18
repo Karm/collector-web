@@ -516,7 +516,7 @@ void RunTime_Plots() {
         appTabs.selected = 1;
         encodeStateToURL();
     }
-    ImGui::Text("Meh.");
+    ImGui::Text("Nothing to see here yet.");
 }
 
 void syncSortedByFromURL() {
@@ -837,6 +837,7 @@ void syncLookupKeywordFromURL() {
             char *begin = const_cast<char *>(result + 3);
             char *end = strstr(begin, "]");
             if (end != nullptr) {
+                memset(bTimePerfMeta.experiment_keyword, 0, IM_ARRAYSIZE(bTimePerfMeta.experiment_keyword));
                 strncpy(bTimePerfMeta.experiment_keyword, begin, end - begin);
             }
         }
@@ -861,7 +862,6 @@ void syncTabFromURL() {
     }
 }
 
-//void CommandG%ld(AppState &state) {
 void CommandGui() {
     LoadAPIKey();
     HelloImGui::ImageFromAsset("quarkus.png");
@@ -891,7 +891,7 @@ void CommandGui() {
     static int last_server = -1;
     static int last_experiment = -1;
 
-    if (first_time) {
+    if (first_time && !downloads.api_key_popup) {
         /*
         printf("Current tab: %d\n", appTabs.selected);
         printf("Current server: %d\n", downloads.current_server);
@@ -913,8 +913,6 @@ void CommandGui() {
             syncLookupKeywordFromURL();
             downloadExperimentsAsync();
         }
-        // Which tab should we jump in on app load.
-        runnerParams.dockingParams.focusDockableWindow(appTabs.labels[appTabs.selected]);
         // Wait till experiments are loaded.
         if (bTimePerfMeta.experiments_elements > 0) {
             syncExperimentSelectorFromURL();
@@ -924,6 +922,11 @@ void CommandGui() {
             syncSortedByFromURL();
             downloadDatasetAsync();
             first_time = false;
+
+            // Which tab should we jump in on app load.
+            // We have to have it here, because the switch in focus would be
+            // fighting the API key modal window focus otherwise.
+            runnerParams.dockingParams.focusDockableWindow(appTabs.labels[appTabs.selected]);
         }
         /*
         printf("Current tab: %d\n", appTabs.selected);
@@ -950,8 +953,11 @@ void CommandGui() {
     }
     if (bTimePerfMeta.experiments_elements > 0) {
         ImGui::Combo("Experiments", &bTimePerfMeta.current_experiment, bTimePerfMeta.experiments_pointers, bTimePerfMeta.experiments_elements);
+        if (ImGui::IsWindowFocused() && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+            set_content_from_imgui(nullptr, bTimePerfMeta.experiments[bTimePerfMeta.current_experiment]);
+        }
         if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Select an experiment. Newest first.");
+            ImGui::SetTooltip("Select an experiment. Newest first. Right-click to clipboard.");
         }
 
         if (last_experiment != bTimePerfMeta.current_experiment) {

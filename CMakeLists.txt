@@ -99,9 +99,19 @@ set(CMAKE_CXX_STANDARD 17)
 # Debugging in Firefox/Chrome, including sources, still some hiccups
 set(CMAKE_BUILD_TYPE RELEASE)
 set(EMCC_DEBUG 0)
-#Manually copy src dir to web root if needed.
-add_link_options("SHELL:-gsource-map")
-add_link_options("SHELL:--source-map-base http://localhost:7777/")
+# Manually copy src dir to web root if needed.
+# TODO: automate for debug builds:
+# cp src build -R
+# cp /home/karm/Tools/emsdk/upstream/emscripten/system build -R
+# cp external build -R
+#add_link_options("SHELL:-gsource-map")
+#add_link_options("SHELL:--source-map-base http://localhost:7777/")
+
+# better profiling
+#add_link_options("SHELL:--profiling")
+
+# Address sanitizer for easier debuging
+# add_link_options("SHELL:-fsanitize=address")
 
 # ImPlot library: Force ImDrawIdx=unsigned int (performance option for ImPlot)
 add_compile_definitions("ImDrawIdx=unsigned int")
