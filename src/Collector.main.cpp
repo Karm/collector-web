@@ -690,6 +690,8 @@ void downloadFailed(emscripten_fetch_t *fetch) {
     const time_t timestamp = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
     if (fetch->status == 401) {
         sprintf(downloads.download_status_message, "%.24s: Unauthorized. API key incorrect for %s?", ctime(&timestamp), downloads.servers[downloads.current_server]);
+    } else if (fetch->status == 0) {
+        sprintf(downloads.download_status_message, "%.24s: Server unreachable", ctime(&timestamp), fetch->status);
     } else {
         sprintf(downloads.download_status_message, "%.24s: HTTP failure status code: %d", ctime(&timestamp), fetch->status);
     }
